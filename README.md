@@ -2,6 +2,14 @@
 
 Access your `opencode` TUI sessions from any browser — desktop or mobile.
 
+<details>
+  <summary>📸 View project screenshots</summary>
+  <img src="./screenshots/screenshot-1.png" width="1024"><br>
+  <img src="./screenshots/screenshot-2.png" width="1024"><br>
+  <img src="./screenshots/screenshot-3.png" width="250">
+  <img src="./screenshots/screenshot-4.png" width="250">
+</details>
+
 ## Requirements
 
 - Node.js >= 20
@@ -19,24 +27,6 @@ Or run directly:
 ```bash
 npx @igovet/opencode-tui-tunnel
 ```
-
-## Screenshots
-
-### Desktop
-
-![Desktop dashboard showing terminal multiplexer session list and controls](./screenshots/desktop-dashboard.png)
-_Main dashboard view with session list and management controls._
-
-![Desktop web interface with multiple terminal sessions visible](./screenshots/desktop-terminals.png)
-_Multiple terminal sessions in the web terminal interface._
-
-### Mobile
-
-![Mobile-responsive dashboard adapted for smaller screens](./screenshots/mobile-dashboard.png)
-_Mobile dashboard layout showing responsive adaptation for small screens._
-
-![Mobile terminal and chat view with touch-friendly controls](./screenshots/mobile-chat.png)
-_Mobile terminal/chat interface optimized for touch interaction._
 
 ## Installation on macOS and Linux
 
@@ -128,6 +118,46 @@ PID: 12345
 
 If the service is already running, the command reports the existing URL/PID instead
 of starting a duplicate process.
+
+## PWA Support
+
+`@igovet/opencode-tui-tunnel` web UI supports **Progressive Web App (PWA)** behavior on compatible browsers. This lets you install the app-like experience on desktop and mobile while still serving from your local tunnel URL.
+
+### What PWA support means in this project
+
+- A web app manifest (`/manifest.webmanifest`) defines app metadata and icons.
+- A service worker (`/sw.js`) provides offline-capable caching behavior for app shell/navigation.
+- On supported platforms, the app can be installed to desktop or home screen and launched in standalone/full-screen style UI.
+
+### Benefits
+
+- **Offline support (service worker):** cached app shell can still load when connectivity is intermittent.
+- **Home screen / app launcher icon:** installable icon on desktop/mobile launch surfaces.
+- **Full-screen / standalone experience:** app opens without standard browser tab chrome on supported platforms.
+- **Push notifications:** not currently configured in this project.
+
+### Desktop installation
+
+- **Google Chrome:** `Menu (⋮) → Install app`
+- **Microsoft Edge:** `Menu (…) → Apps → Install`
+- **Mozilla Firefox:** install flow is not currently supported; use the app directly in the browser tab.
+
+### Mobile installation
+
+- **iOS Safari:** `Share → Add to Home Screen`
+- **Android Chrome:** `Menu (⋮) → Add to Home Screen`
+
+### Platform quick guide
+
+1. Start the service:
+
+   ```bash
+   opencode-tui-tunnel start
+   ```
+
+2. Open the printed URL in your platform browser.
+3. Follow the install path above for your browser/device.
+4. Launch from the installed icon (desktop app list or mobile home screen).
 
 ## CLI Reference
 
