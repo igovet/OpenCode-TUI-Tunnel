@@ -21,13 +21,6 @@ on:
 permissions:
   contents: write
 
-# Node.js 24 compatibility:
-# - actions/checkout@v6
-# - actions/setup-node@v6
-# - actions/github-script@v8
-# If Node runtime warnings persist on self-hosted runners, upgrade actions/runner
-# to v2.327.1+ (minimum required by actions/github-script@v8).
-
 jobs:
   determine-release:
     name: Determine release eligibility
@@ -100,7 +93,7 @@ jobs:
     name: Build and test
     runs-on: ubuntu-latest
     needs: determine-release
-    if: ${{ fromJSON(needs['determine-release'].outputs.should_release || 'false') }}
+    if: needs.determine-release.outputs.should_release == 'true'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -126,7 +119,7 @@ jobs:
     needs:
       - determine-release
       - build-and-test
-    if: ${{ fromJSON(needs['determine-release'].outputs.should_release || 'false') }}
+    if: needs.determine-release.outputs.should_release == 'true' && needs.build-and-test.result == 'success'
     outputs:
       tag_name: ${{ steps.release.outputs.tag_name }}
     steps:
@@ -134,7 +127,7 @@ jobs:
         id: release
         uses: actions/github-script@v8
         env:
-          PACKAGE_VERSION: ${{ needs['determine-release'].outputs.version }}
+          PACKAGE_VERSION: ${{ needs.determine-release.outputs.version }}
         with:
           script: |
             const version = process.env.PACKAGE_VERSION;
@@ -177,7 +170,11 @@ jobs:
       - determine-release
       - build-and-test
       - create-github-release
-    if: ${{ fromJSON(needs['determine-release'].outputs.should_release || 'false') && (github.event_name != 'workflow_dispatch' || inputs.publish_to_npm) }}
+    if: >-
+      needs.determine-release.outputs.should_release == 'true' &&
+      needs.build-and-test.result == 'success' &&
+      needs.create-github-release.result == 'success' &&
+      (github.event_name != 'workflow_dispatch' || inputs.publish_to_npm == true)
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -202,12 +199,12 @@ jobs:
     runs-on: ubuntu-latest
     needs:
       - determine-release
-    if: ${{ always() }}
+    if: always()
     steps:
       - name: Print determine-release outputs
         run: |
           echo "event_name=${{ github.event_name }}"
-          echo "should_release=${{ needs['determine-release'].outputs.should_release }}"
-          echo "version=${{ needs['determine-release'].outputs.version }}"
-          echo "reason=${{ needs['determine-release'].outputs.reason }}"
+          echo "should_release=${{ needs.determine-release.outputs.should_release }}"
+          echo "version=${{ needs.determine-release.outputs.version }}"
+          echo "reason=${{ needs.determine-release.outputs.reason }}"
           echo "publish_to_npm(input)=${{ github.event_name == 'workflow_dispatch' && inputs.publish_to_npm || 'n/a' }}"
