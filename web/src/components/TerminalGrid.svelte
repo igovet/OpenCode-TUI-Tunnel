@@ -174,7 +174,7 @@
     width: 100%;
     flex: 1;
     min-height: 0;
-    gap: 4px;
+    gap: 0;
     overflow: hidden;
   }
 
@@ -183,9 +183,13 @@
     min-width: min(100%, 400px);
     min-height: 0;
     height: 100%;
+    width: 100%;
     overflow: hidden;
     display: flex;
     flex-direction: column;
+    padding: 0;
+    margin: 0;
+    box-sizing: border-box;
   }
 
   :global(.terminal-grid > .pane-wrapper > .terminal-pane) {

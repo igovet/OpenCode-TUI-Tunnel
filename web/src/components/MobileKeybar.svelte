@@ -5,63 +5,75 @@
   let bottomOffset = $state(0);
   let isMobile = $state(false);
   let ctrlActive = $state(false);
-  let hiddenInput: HTMLInputElement | undefined = $state();
 
-  function handleHiddenKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape' || e.key === 'Enter') {
+  function openCtrlInput() {
+    ctrlActive = true;
+    
+    // Create a temporary contenteditable div
+    const div = document.createElement('div');
+    div.contentEditable = 'true';
+    div.style.cssText = 'position:fixed;opacity:0;left:-9999px;top:0;width:1px;height:1px;';
+    div.autocapitalize = 'off';
+    div.setAttribute('autocorrect', 'off');
+    div.setAttribute('autocomplete', 'off');
+    div.setAttribute('spellcheck', 'false');
+    document.body.appendChild(div);
+    
+    function cleanup() {
       ctrlActive = false;
-      hiddenInput?.blur();
+      div.removeEventListener('input', onInput);
+      div.removeEventListener('blur', onBlur);
+      div.removeEventListener('keydown', onKeydown);
+      if (div.parentNode) document.body.removeChild(div);
     }
-  }
-
-  function handleHiddenBlur() {
-    ctrlActive = false;
-  }
-
-  $effect(() => {
-    if (ctrlActive && hiddenInput) {
-      hiddenInput.value = '';
-      hiddenInput.focus();
-
-      const inputHandler = (e: Event) => {
-        const target = e.target as HTMLInputElement;
-        if (!target.value) return;
-        
-        const char = target.value[0];
-        target.value = '';
-        
-        let seq = '';
-        const charMap: Record<string, string> = {
-          'c': '\x03', 'C': '\x03',
-          'z': '\x1a', 'Z': '\x1a',
-          'd': '\x04', 'D': '\x04',
-          'l': '\x0c', 'L': '\x0c',
-          'a': '\x01', 'A': '\x01',
-          'e': '\x05', 'E': '\x05',
-          'p': '\x10', 'P': '\x10',
-          'u': '\x15', 'U': '\x15',
-        };
-        
-        if (charMap[char]) {
-          seq = charMap[char];
-        } else if (/^[a-zA-Z]$/.test(char)) {
-          seq = String.fromCharCode(char.toUpperCase().charCodeAt(0) - 64);
-        } else {
-          seq = '\x1b' + char;
-        }
-        
-        sendKey(seq);
-        ctrlActive = false;
-        hiddenInput?.blur();
+    
+    function onInput() {
+      const char = (div.textContent || '')[0];
+      if (!char) return;
+      div.textContent = '';
+      
+      const charMap: Record<string, string> = {
+        'c': '\x03', 'C': '\x03',
+        'z': '\x1a', 'Z': '\x1a',
+        'd': '\x04', 'D': '\x04',
+        'l': '\x0c', 'L': '\x0c',
+        'a': '\x01', 'A': '\x01',
+        'e': '\x05', 'E': '\x05',
+        'p': '\x10', 'P': '\x10',
+        'u': '\x15', 'U': '\x15',
       };
-
-      hiddenInput.addEventListener('input', inputHandler);
-
-      return () => {
-        hiddenInput?.removeEventListener('input', inputHandler);
-      };
+      
+      let seq = '';
+      if (charMap[char]) {
+        seq = charMap[char];
+      } else if (/^[a-zA-Z]$/.test(char)) {
+        seq = String.fromCharCode(char.toUpperCase().charCodeAt(0) - 64);
+      } else {
+        seq = '\x1b' + char;
+      }
+      
+      sendKey(seq);
+      cleanup();
     }
-  });
+    
+    function onBlur() {
+      cleanup();
+    }
+    
+    function onKeydown(e: KeyboardEvent) {
+      if (e.key === 'Escape' || e.key === 'Enter') {
+        e.preventDefault();
+        cleanup();
+      }
+    }
+    
+    div.addEventListener('input', onInput);
+    div.addEventListener('blur', onBlur);
+    div.addEventListener('keydown', onKeydown);
+    
+    // Focus must happen in same tick as user gesture (touchend)
+    div.focus();
+  }
 
   $effect(() => {
     if (typeof window === 'undefined') return;
@@ -116,13 +128,21 @@
     }
   }
 
+  function isKeyboardOpen(): boolean {
+    if (typeof window === 'undefined' || !window.visualViewport) return false;
+    return (window.innerHeight - window.visualViewport.height) > 100;
+  }
+
   function makeTapHandler(action: () => void) {
     let startX = 0, startY = 0, moved = false;
+    let wasKeyboardOpen = false;
     return {
       touchstart: (e: TouchEvent) => {
+        e.stopPropagation();
         startX = e.touches[0].clientX;
         startY = e.touches[0].clientY;
         moved = false;
+        wasKeyboardOpen = isKeyboardOpen();
       },
       touchmove: (e: TouchEvent) => {
         const dx = Math.abs(e.touches[0].clientX - startX);
@@ -130,9 +150,22 @@
         if (dx > 8 || dy > 8) moved = true;
       },
       touchend: (e: TouchEvent) => {
+        e.stopPropagation();
         if (!moved) {
           e.preventDefault();
           action();
+          // After action: if keyboard was closed before, make sure it stays closed
+          if (!wasKeyboardOpen) {
+            // Use setTimeout to run after any focus side effects
+            setTimeout(() => {
+              if (isKeyboardOpen()) {
+                // Keyboard opened unexpectedly - close it by blurring active element
+                if (document.activeElement && document.activeElement !== document.body) {
+                  (document.activeElement as HTMLElement).blur();
+                }
+              }
+            }, 50);
+          }
         }
       }
     };
@@ -143,6 +176,8 @@
     { seq: '\x1b[B', label: '↓' },
     { seq: '\x1b[D', label: '←' },
     { seq: '\x1b[C', label: '→' },
+    { seq: '', action: () => { const term = get(activeTerminalRef); if (term) term.terminal.scrollToTop(); }, label: 'Home' },
+    { seq: '', action: () => { const term = get(activeTerminalRef); if (term) term.terminal.scrollToBottom(); }, label: 'End' },
     { seq: '\r', label: '⏎ Enter', cls: 'enter' },
     { seq: '\x0a', label: '↵ NL', cls: 'enter' },
     { seq: '\t', label: 'Tab' },
@@ -155,33 +190,47 @@
     { seq: '\x01', label: 'Ctrl+A' },
     { seq: '\x05', label: 'Ctrl+E' },
     { seq: '\x10', label: 'Ctrl+P' }
-  ].map(k => ({ ...k, tap: makeTapHandler(() => sendKey(k.seq)) }));
+  ].map(k => ({ ...k, tap: makeTapHandler(k.action || (() => sendKey(k.seq))) }));
 
   const pasteTap = makeTapHandler(handlePaste);
-  const ctrlTap = makeTapHandler(() => { 
-    ctrlActive = !ctrlActive;
-    if (ctrlActive && hiddenInput) {
-      hiddenInput.value = '';
-      hiddenInput.focus();
-    }
-  });
+  const ctrlTap = (() => {
+    let startX = 0, startY = 0, moved = false;
+    return {
+      touchstart: (e: TouchEvent) => {
+        e.stopPropagation();
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        moved = false;
+      },
+      touchmove: (e: TouchEvent) => {
+        const dx = Math.abs(e.touches[0].clientX - startX);
+        const dy = Math.abs(e.touches[0].clientY - startY);
+        if (dx > 8 || dy > 8) moved = true;
+      },
+      touchend: (e: TouchEvent) => {
+        e.stopPropagation();
+        if (!moved) {
+          e.preventDefault();
+          if (ctrlActive) {
+            ctrlActive = false;
+          } else {
+            openCtrlInput();
+          }
+        }
+      }
+    };
+  })();
 </script>
 
 {#if isMobile}
-  <input
-    type="text"
-    bind:this={hiddenInput}
-    onkeydown={handleHiddenKeydown}
-    onblur={handleHiddenBlur}
-    style="opacity: 0; position: absolute; left: -9999px; height: 1px; width: 1px;"
-    autocomplete="off"
-    autocorrect="off"
-    autocapitalize="off"
-    spellcheck="false"
-  />
-  <div class="keybar" style="bottom: {bottomOffset}px">
+  <div 
+    class="keybar" 
+    style="bottom: {bottomOffset}px"
+    onpointerdown={(e) => e.preventDefault()}
+  >
     <button
       class="key {ctrlActive ? 'ctrl-active' : ''}"
+      tabindex="-1"
       ontouchstart={ctrlTap.touchstart}
       ontouchmove={ctrlTap.touchmove}
       ontouchend={ctrlTap.touchend}
@@ -189,6 +238,7 @@
     {#each keys as key}
       <button
         class="key {key.cls ?? ''}"
+        tabindex="-1"
         ontouchstart={key.tap.touchstart}
         ontouchmove={key.tap.touchmove}
         ontouchend={key.tap.touchend}
@@ -196,6 +246,7 @@
     {/each}
     <button
       class="key"
+      tabindex="-1"
       ontouchstart={pasteTap.touchstart}
       ontouchmove={pasteTap.touchmove}
       ontouchend={pasteTap.touchend}
@@ -236,6 +287,8 @@
     cursor: pointer;
     user-select: none;
     -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
   }
   .key.enter {
     background: #1a3a1a;

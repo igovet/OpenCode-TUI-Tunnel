@@ -63,10 +63,12 @@
       currentView = 'home';
     }
   });
+
+  let headerHeight = $state(40);
 </script>
 
 <div class="app-shell">
-  <header class="app-header">
+  <header class="app-header" bind:clientHeight={headerHeight}>
     <button class="app-logo" onclick={goHome} class:active={currentView === 'home'}>
       <span class="logo-text">&gt;_</span>
       <span class="logo-name">OCT</span>
@@ -96,7 +98,7 @@
     {#if currentView === 'home' || $workspace.tabs.length === 0}
       <SessionList onopenSession={(e) => workspace.openTab(e)} />
     {:else}
-      <WorkspaceView />
+      <WorkspaceView {headerHeight} />
     {/if}
   </main>
 </div>

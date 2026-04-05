@@ -22,7 +22,19 @@ export async function launchSession(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ cwd, cols, rows }),
   });
-  if (!res.ok) throw new Error('Failed to launch session');
+  if (!res.ok) {
+    let body: { error?: string } = {};
+    try {
+      body = await res.json();
+    } catch {
+      /* ignore */
+    }
+    const err: Error & { statusCode?: number } = new Error(
+      body.error ?? 'Failed to launch session',
+    );
+    err.statusCode = res.status;
+    throw err;
+  }
   return res.json();
 }
 

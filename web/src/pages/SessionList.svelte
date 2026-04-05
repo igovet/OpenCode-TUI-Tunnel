@@ -15,6 +15,17 @@
 
   let launchCwd = $state('');
 
+  interface ErrorModal { title: string; message: string; hint: string }
+  let errorModal = $state<ErrorModal | null>(null);
+
+  function showLimitError() {
+    errorModal = {
+      title: 'Session limit reached',
+      message: 'Maximum number of concurrent sessions (8) is already running.',
+      hint: 'Close one or more active sessions to free up a slot, or increase the maxConcurrent limit in your configuration file.'
+    };
+  }
+
   async function load() {
     try {
       const [sessRes, histRes, tmuxRes] = await Promise.all([
@@ -46,8 +57,13 @@
     try {
       const { session } = await launchSession(launchCwd, 80, 24);
       openSessionTab(session);
-    } catch (e) {
-      console.error(e);
+    } catch (e: unknown) {
+      const err = e as Error & { statusCode?: number };
+      if (err.statusCode === 409) {
+        showLimitError();
+      } else {
+        console.error(e);
+      }
     }
   }
 
@@ -60,8 +76,13 @@
         const s = sessions.find(s => s.id === res.sessionId);
         if (s) openSessionTab(s);
       }
-    } catch (e) {
-      console.error(e);
+    } catch (e: unknown) {
+      const err = e as Error & { statusCode?: number };
+      if (err.statusCode === 409) {
+        showLimitError();
+      } else {
+        console.error(e);
+      }
     }
   }
 
@@ -141,6 +162,20 @@
       {/if}
     </div>
   </main>
+
+  {#if errorModal}
+    <div class="modal-overlay" onclick={() => errorModal = null} role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-box" onclick={(e) => e.stopPropagation()}>
+        <div class="modal-header">
+          <span class="modal-icon">⚠</span>
+          <h2 id="modal-title" class="modal-title">{errorModal.title}</h2>
+        </div>
+        <p class="modal-message">{errorModal.message}</p>
+        <p class="modal-hint">{errorModal.hint}</p>
+        <button class="btn primary modal-close" onclick={() => errorModal = null}>DISMISS</button>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -298,5 +333,72 @@
     .grid-cards {
       grid-template-columns: 1fr;
     }
+  }
+
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    padding: var(--space-4);
+  }
+
+  .modal-box {
+    background: var(--bg-surface);
+    border: 1px solid var(--accent-red, #f85149);
+    border-radius: var(--radius-md);
+    padding: var(--space-6);
+    max-width: 480px;
+    width: 100%;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+  }
+
+  .modal-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+  }
+
+  .modal-icon {
+    font-size: 1.5rem;
+    color: var(--accent-red, #f85149);
+    line-height: 1;
+  }
+
+  .modal-title {
+    margin: 0;
+    font-size: var(--font-size-md, 1rem);
+    font-weight: 700;
+    color: var(--accent-red, #f85149);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+  }
+
+  .modal-message {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
+  }
+
+  .modal-hint {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
+    border-left: 2px solid var(--border-accent, #30363d);
+    padding-left: var(--space-3);
+  }
+
+  .modal-close {
+    align-self: flex-end;
+    font-weight: 700;
+    letter-spacing: 1px;
   }
 </style>

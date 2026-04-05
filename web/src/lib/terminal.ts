@@ -27,7 +27,7 @@ export class TerminalManager {
       scrollback: 10000,
       allowProposedApi: true,
       fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-      fontSize: 13,
+      fontSize: 14,
       lineHeight: 1.0,
       letterSpacing: 0,
       fontWeight: 'normal',
@@ -43,16 +43,6 @@ export class TerminalManager {
 
     this.fitAddon = new FitAddon();
     this.terminal.loadAddon(this.fitAddon);
-    this.terminal.open(element);
-    this.setupTouchScroll(element);
-
-    // Use Canvas renderer for pixel-perfect TUI rendering (eliminates DOM sub-pixel gaps)
-    try {
-      const canvasAddon = new CanvasAddon();
-      this.terminal.loadAddon(canvasAddon);
-    } catch (e) {
-      console.warn('CanvasAddon unavailable, falling back to DOM renderer:', e);
-    }
 
     this.terminal.attachCustomKeyEventHandler(() => true);
 
@@ -62,6 +52,20 @@ export class TerminalManager {
         this.ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
       }
     });
+  }
+
+  open(): void {
+    this.terminal.open(this.element);
+
+    // Use Canvas renderer for pixel-perfect TUI rendering on HiDPI screens
+    try {
+      const canvasAddon = new CanvasAddon();
+      this.terminal.loadAddon(canvasAddon);
+    } catch (e) {
+      console.warn('CanvasAddon unavailable, falling back to DOM renderer:', e);
+    }
+
+    this.setupTouchScroll(this.element);
   }
 
   private setupTouchScroll(element: HTMLElement): void {
