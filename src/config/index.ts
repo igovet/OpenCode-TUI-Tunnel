@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-const CONFIG_VERSION = 1;
+const CONFIG_VERSION = 2;
 
 export interface AppConfig {
   configVersion: number;
@@ -36,6 +36,12 @@ export interface AppConfig {
   ui: {
     theme: 'system' | 'dark' | 'light';
     mobileKeybar: boolean;
+  };
+  updates: {
+    checkOnStart: boolean;
+    autoApply: boolean;
+    checkTimeoutMs: number;
+    installTimeoutMs: number;
   };
 }
 
@@ -107,6 +113,12 @@ export function getDefaultConfig(): AppConfig {
     ui: {
       theme: 'system',
       mobileKeybar: true,
+    },
+    updates: {
+      checkOnStart: true,
+      autoApply: true,
+      checkTimeoutMs: 1200,
+      installTimeoutMs: 300000,
     },
   };
 }

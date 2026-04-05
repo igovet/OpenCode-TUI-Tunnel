@@ -19,90 +19,90 @@
   }
 </script>
 
-<div class="card">
+<div class="card terminal-card">
   <div class="header">
     <div class="title-row">
-      <h3 title={session.cwd}>{getBasename(session.cwd)}</h3>
+      <h3 title={session.cwd} class="session-title"><span class="prompt"></span>{getBasename(session.cwd)}</h3>
       <StatusBadge status={session.status} />
     </div>
     <div class="meta">
-      <span>Started {timeAgo(session.startedAt)}</span>
-      <span>•</span>
-      <span>{session.clientCount} client{session.clientCount === 1 ? '' : 's'}</span>
+      <span class="meta-item">up {timeAgo(session.startedAt)}</span>
+      <span class="meta-divider">|</span>
+      <span class="meta-item">{session.clientCount} usr</span>
     </div>
   </div>
   
   <div class="actions">
-    <button class="primary" onclick={() => onConnect(session.id)} disabled={session.status === 'exited' || session.status === 'failed'}>
-      Connect
+    <button class="btn primary" onclick={() => onConnect(session.id)} disabled={session.status === 'exited' || session.status === 'failed'}>
+      [ CONNECT ]
     </button>
   </div>
 </div>
 
 <style>
-  .card {
-    background: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 8px;
-    padding: 16px;
+  .terminal-card {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm);
+    padding: var(--space-3);
     display: flex;
     flex-direction: column;
-    gap: 16px;
+    gap: var(--space-3);
+    transition: all var(--transition-fast);
+    box-shadow: inset 0 0 10px rgba(0,0,0,0.2);
+  }
+  
+  .terminal-card:hover {
+    border-color: var(--accent-blue);
+    background: var(--bg-overlay);
+    box-shadow: inset 0 0 10px rgba(88, 166, 255, 0.05);
   }
   
   .header {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--space-2);
   }
   
   .title-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: var(--space-2);
   }
   
-  h3 {
+  .session-title {
     margin: 0;
-    font-size: 1.1rem;
-    color: #e6edf3;
+    font-size: var(--font-size-md);
+    color: var(--text-primary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-weight: 600;
   }
   
   .meta {
-    font-size: 0.85rem;
-    color: #8b949e;
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
     display: flex;
-    gap: 8px;
+    gap: var(--space-2);
     align-items: center;
+    font-family: var(--font-mono);
+  }
+  
+  .meta-divider {
+    color: var(--border-muted);
   }
   
   .actions {
     display: flex;
     justify-content: flex-end;
+    margin-top: var(--space-1);
   }
   
-  button.primary {
-    background: #238636;
-    color: #ffffff;
-    border: 1px solid rgba(240,246,252,0.1);
-    padding: 5px 16px;
-    border-radius: 6px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.2s;
-  }
-  
-  button.primary:hover:not(:disabled) {
-    background: #2ea043;
-  }
-  
-  button.primary:disabled {
-    background: #21262d;
-    color: #8b949e;
-    cursor: not-allowed;
+  .btn.primary {
+    font-size: var(--font-size-xs);
+    padding: var(--space-1) var(--space-3);
+    letter-spacing: 1px;
   }
 </style>

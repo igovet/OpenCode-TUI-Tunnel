@@ -78,144 +78,225 @@
 </script>
 
 <div class="dashboard">
-  <header>
-    <h1>OpenCode TUI Tunnel</h1>
+  <header class="dash-header">
+    <h1><span class="prompt"></span>WORKSTATION DASHBOARD</h1>
   </header>
 
-  <main>
-    <section class="launch-section">
-      <h2>Launch New Session</h2>
-      <div class="launch-form">
-        <PathAutocomplete 
-          value={launchCwd} 
-          onchange={(v) => launchCwd = v} 
-          onselect={(v) => { launchCwd = v; handleLaunch(); }}
-        />
-        <button class="primary" onclick={handleLaunch}>Launch</button>
-      </div>
-    </section>
-
-    {#if sessions.length > 0}
-      <section>
-        <h2>Running Sessions</h2>
-        <div class="grid">
-          {#each sessions as session (session.id)}
-            <SessionCard {session} onConnect={(id) => openSessionTab(session)} />
-          {/each}
+  <main class="dash-grid">
+    <div class="dash-col main-col">
+      <section class="panel launch-panel">
+        <h2 class="panel-title">[ LAUNCH ]</h2>
+        <div class="panel-content">
+          <p class="panel-desc">Start a new isolated terminal session in the specified directory.</p>
+          <div class="launch-form">
+            <PathAutocomplete 
+              value={launchCwd} 
+              onchange={(v) => launchCwd = v} 
+              onselect={(v) => { launchCwd = v; }}
+            />
+            <button class="btn primary launch-btn" onclick={handleLaunch}>EXECUTE</button>
+          </div>
         </div>
       </section>
-    {/if}
 
-    {#if history.length > 0}
-      <section>
-        <h2>Recent Projects</h2>
-        <div class="list">
-          {#each history as proj}
-            <div class="list-item">
-              <span>{proj.path}</span>
-              <button onclick={() => { launchCwd = proj.path; handleLaunch(); }}>Launch</button>
-            </div>
-          {/each}
-        </div>
-      </section>
-    {/if}
+      {#if sessions.length > 0}
+        <section class="panel">
+          <h2 class="panel-title">&gt; ACTIVE_SESSIONS</h2>
+          <div class="panel-content grid-cards">
+            {#each sessions as session (session.id)}
+              <SessionCard {session} onConnect={(id) => openSessionTab(session)} />
+            {/each}
+          </div>
+        </section>
+      {/if}
+    </div>
 
-    {#if tmuxSessions.length > 0}
-      <section>
-        <h2>Tmux Sessions</h2>
-        <div class="list">
-          {#each tmuxSessions as ts}
-            <div class="list-item">
-              <span>{ts.name} ({ts.windows} windows)</span>
-              <button onclick={() => handleAttach(ts.name)}>Attach</button>
-            </div>
-          {/each}
-        </div>
-      </section>
-    {/if}
+    <div class="dash-col side-col">
+      {#if history.length > 0}
+        <section class="panel">
+          <h2 class="panel-title">[ RECENT_PROJECTS ]</h2>
+          <div class="panel-content list-compact">
+            {#each history as proj}
+              <div class="list-item">
+                <span class="path-text" title={proj.path}>{proj.path}</span>
+                <button class="btn btn-small" onclick={() => { launchCwd = proj.path; handleLaunch(); }}>INIT</button>
+              </div>
+            {/each}
+          </div>
+        </section>
+      {/if}
+
+      {#if tmuxSessions.length > 0}
+        <section class="panel">
+          <h2 class="panel-title">[ TMUX_DISCOVERY ]</h2>
+          <div class="panel-content list-compact">
+            {#each tmuxSessions as ts}
+              <div class="list-item">
+                <span class="tmux-name">{ts.name} <span class="dim">({ts.windows}w)</span></span>
+                <button class="btn btn-small" onclick={() => handleAttach(ts.name)}>ATTACH</button>
+              </div>
+            {/each}
+          </div>
+        </section>
+      {/if}
+    </div>
   </main>
 </div>
 
 <style>
   .dashboard {
-    max-width: 1200px;
-    margin: 0 auto;
-    padding: 24px;
-    font-family: var(--font-sans, -apple-system, sans-serif);
+    width: 100%;
+    padding: var(--space-4) var(--space-6);
+    font-family: var(--font-mono);
   }
   
-  header {
-    margin-bottom: 32px;
-    padding-bottom: 16px;
-    border-bottom: 1px solid var(--border-default, #30363d);
+  .dash-header {
+    margin-bottom: var(--space-6);
+    padding-bottom: var(--space-3);
+    border-bottom: 1px solid var(--border-accent);
   }
 
   h1 {
     margin: 0;
-    font-size: 1.5rem;
+    font-size: var(--font-size-lg);
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: 1px;
+    text-shadow: 0 0 10px rgba(88, 166, 255, 0.3);
   }
 
-  section {
-    margin-bottom: 32px;
+  .dash-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: var(--space-6);
+    align-items: start;
   }
 
-  h2 {
-    font-size: 1.2rem;
-    margin-bottom: 16px;
-    color: var(--text-secondary, #8b949e);
+  @media (max-width: 900px) {
+    .dash-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  .panel {
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    margin-bottom: var(--space-6);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  }
+
+  .panel-title {
+    font-size: var(--font-size-sm);
+    margin: 0;
+    padding: var(--space-2) var(--space-4);
+    background: var(--bg-elevated);
+    color: var(--accent-blue);
+    border-bottom: 1px solid var(--border-default);
+    letter-spacing: 0.05em;
+  }
+
+  .panel-content {
+    padding: var(--space-4);
+  }
+
+  .launch-panel {
+    border-color: var(--accent-green);
+    overflow: visible;
+  }
+  .launch-panel .panel-title {
+    background: rgba(63, 185, 80, 0.1);
+    color: var(--accent-green);
+    border-bottom-color: var(--accent-green);
+  }
+
+  .panel-desc {
+    color: var(--text-secondary);
+    margin-bottom: var(--space-4);
+    font-size: var(--font-size-sm);
   }
 
   .launch-form {
     display: flex;
-    gap: 12px;
+    gap: var(--space-3);
     align-items: center;
   }
 
-  button.primary {
-    background: var(--btn-primary-bg, #238636);
-    color: white;
-    border: none;
-    padding: 8px 16px;
-    border-radius: 6px;
-    cursor: pointer;
+  .launch-btn {
+    font-weight: 700;
+    letter-spacing: 1px;
   }
 
-  button.primary:hover {
-    background: var(--btn-primary-hover, #2ea043);
-  }
-
-  .grid {
+  .grid-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-    gap: 16px;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: var(--space-4);
   }
 
-  .list {
+  .list-compact {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: var(--space-2);
   }
 
   .list-item {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 16px;
-    background: var(--bg-surface, #161b22);
-    border: 1px solid var(--border-default, #30363d);
-    border-radius: 6px;
+    padding: var(--space-2) var(--space-3);
+    background: var(--bg-base);
+    border: 1px solid var(--border-muted);
+    border-radius: var(--radius-sm);
+    transition: border-color var(--transition-fast);
+  }
+  
+  .list-item:hover {
+    border-color: var(--border-default);
+    background: var(--bg-elevated);
   }
 
-  .list-item button {
-    background: transparent;
-    border: 1px solid var(--border-default, #30363d);
-    color: var(--text-primary, #e6edf3);
-    padding: 4px 12px;
-    border-radius: 4px;
-    cursor: pointer;
+  .path-text {
+    font-size: var(--font-size-sm);
+    color: var(--text-primary);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 70%;
   }
 
-  .list-item button:hover {
-    background: var(--bg-tertiary, #21262d);
+  .tmux-name {
+    font-size: var(--font-size-sm);
+    color: var(--accent-cyan);
+    font-weight: 600;
+  }
+  .dim {
+    color: var(--text-muted);
+    font-weight: 400;
+  }
+
+  .btn-small {
+    padding: 2px 8px;
+    font-size: var(--font-size-xs);
+  }
+
+  @media (max-width: 640px) {
+    .dashboard {
+      padding: var(--space-3) var(--space-3);
+    }
+    
+    .launch-form {
+      flex-direction: column;
+      align-items: stretch;
+    }
+    
+    .launch-btn {
+      width: 100%;
+      justify-content: center;
+    }
+    
+    .grid-cards {
+      grid-template-columns: 1fr;
+    }
   }
 </style>

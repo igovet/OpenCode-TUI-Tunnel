@@ -18,7 +18,10 @@ import {
   saveConfig,
   type AppConfig,
 } from '../config/index.js';
-import { startServer } from '../server/index.js';
+import { registerInternalCommands } from './commands/internal.js';
+import { registerStartCommand } from './commands/start.js';
+import { registerStatusCommand } from './commands/status.js';
+import { registerAutostartCommand } from './commands/autostart.js';
 
 const execFileAsync = promisify(execFile);
 const program = new Command();
@@ -134,55 +137,6 @@ function printSessionsTable(rows: SessionSummaryRow[]): void {
   }
 }
 
-function printStartupBanner(url: string): void {
-  const lines = ['opencode-tui-tunnel', url];
-  const contentWidth = Math.max(...lines.map((line) => line.length)) + 2;
-  const top = `  ╔${'═'.repeat(contentWidth)}╗`;
-  const bottom = `  ╚${'═'.repeat(contentWidth)}╝`;
-
-  console.log('');
-  console.log(top);
-  for (const line of lines) {
-    console.log(`  ║ ${line.padEnd(contentWidth - 1)}║`);
-  }
-  console.log(bottom);
-}
-
-function resolveStartupUrl(address: string, host: string, port: number): string {
-  const fallback = `http://${host}:${port}`;
-
-  try {
-    const parsed = new URL(address);
-
-    if (parsed.hostname === '0.0.0.0' || parsed.hostname === '::' || parsed.hostname === '[::]') {
-      parsed.hostname = host === '0.0.0.0' ? '127.0.0.1' : host;
-    }
-
-    return parsed.toString().replace(/\/$/, '');
-  } catch {
-    return fallback;
-  }
-}
-
-async function openBrowser(url: string): Promise<void> {
-  if (process.platform === 'darwin') {
-    await execFileAsync('open', [url]);
-    return;
-  }
-
-  if (process.platform === 'win32') {
-    await execFileAsync('cmd', ['/c', 'start', '', url]);
-    return;
-  }
-
-  const linuxOpenCommand = await commandPath('xdg-open');
-  if (!linuxOpenCommand) {
-    throw new Error('xdg-open not found in PATH');
-  }
-
-  await execFileAsync(linuxOpenCommand, [url]);
-}
-
 function getConfigValueByPath(root: unknown, path: string): unknown {
   const segments = path.split('.').filter(Boolean);
   let cursor: unknown = root;
@@ -245,7 +199,10 @@ function parseConfigValue(raw: string): string | number | boolean {
   return raw;
 }
 
-async function requestServerJson(pathname: string, method: 'GET' | 'DELETE' = 'GET'): Promise<unknown> {
+async function requestServerJson(
+  pathname: string,
+  method: 'GET' | 'DELETE' = 'GET',
+): Promise<unknown> {
   const config = loadConfig();
   const baseUrl = `http://127.0.0.1:${config.server.port}`;
   const targetUrl = `${baseUrl}${pathname}`;
@@ -293,60 +250,10 @@ program
   .description('Web terminal multiplexer for opencode TUI sessions')
   .version('0.1.0');
 
-program
-  .command('start')
-  .description('Start the tunnel service')
-  .option('--host <host>', 'Listen host', undefined)
-  .option('--port <port>', 'Listen port', undefined)
-  .option('--no-open', 'Do not open browser')
-  .action(async (opts: { host?: string; port?: string; open?: boolean }) => {
-    const config = loadConfig();
-
-    if (opts.host) {
-      config.server.host = opts.host;
-    }
-
-    if (opts.port) {
-      const port = Number.parseInt(opts.port, 10);
-
-      if (!Number.isFinite(port) || port <= 0) {
-        throw new Error(`Invalid --port value: ${opts.port}`);
-      }
-
-      config.server.port = port;
-    }
-
-    if (typeof opts.open === 'boolean') {
-      config.server.openBrowserOnStart = opts.open;
-    }
-
-    const { address } = await startServer(config);
-    const startupUrl = resolveStartupUrl(address, config.server.host, config.server.port);
-
-    printStartupBanner(startupUrl);
-
-    if (config.server.openBrowserOnStart) {
-      try {
-        await openBrowser(startupUrl);
-      } catch (error) {
-        const reason = error instanceof Error ? error.message : String(error);
-        console.warn(`Failed to open browser automatically (${reason}).`);
-      }
-    }
-  });
-
-program
-  .command('status')
-  .description('Show tunnel service status')
-  .action(() => {
-    const pidPath = join(getConfigDir(), 'server.pid');
-    if (!existsSync(pidPath)) {
-      console.log('Server status: stopped (PID file not found)');
-      return;
-    }
-
-    console.log(`Server status: running (PID file: ${pidPath})`);
-  });
+registerStartCommand(program);
+registerStatusCommand(program);
+registerInternalCommands(program);
+registerAutostartCommand(program);
 
 program
   .command('sessions')
@@ -493,9 +400,7 @@ program
     checks.push({
       ok: opencodePath !== null,
       message:
-        opencodePath !== null
-          ? `opencode found at ${opencodePath}`
-          : 'opencode not found in PATH',
+        opencodePath !== null ? `opencode found at ${opencodePath}` : 'opencode not found in PATH',
     });
 
     const configDir = getConfigDir();

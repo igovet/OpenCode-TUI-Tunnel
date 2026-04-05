@@ -1,7 +1,7 @@
-const CACHE_NAME = 'opencode-tui-tunnel-v1';
+const CACHE_NAME = 'opencode-tui-v1';
 
 // Assets to pre-cache on install (will be populated by build)
-const STATIC_ASSETS = ['/', '/index.html'];
+const STATIC_ASSETS = ['/', '/index.html', '/manifest.webmanifest'];
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
@@ -33,7 +33,6 @@ self.addEventListener('fetch', (event) => {
 
   // Never cache: API routes, WebSocket upgrades
   if (url.pathname.startsWith('/api/') || event.request.headers.get('upgrade') === 'websocket') {
-    event.respondWith(fetch(event.request));
     return;
   }
 

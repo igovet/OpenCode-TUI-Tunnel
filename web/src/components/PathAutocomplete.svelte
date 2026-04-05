@@ -4,7 +4,7 @@
   let { value = '', onchange, onselect } = $props<{
     value: string;
     onchange: (val: string) => void;
-    onselect: (val: string) => void;
+    onselect?: (val: string) => void;
   }>();
 
   let suggestions = $state<string[]>([]);
@@ -48,8 +48,6 @@
       e.preventDefault();
       if (activeIndex >= 0 && activeIndex < suggestions.length) {
         selectSuggestion(suggestions[activeIndex]);
-      } else {
-        onselect(value);
       }
     } else if (e.key === 'Escape') {
       showSuggestions = false;
@@ -58,7 +56,8 @@
 
   function selectSuggestion(suggestion: string) {
     onchange(suggestion);
-    onselect(suggestion);
+    onselect?.(suggestion);
+    activeIndex = -1;
     showSuggestions = false;
   }
 </script>
@@ -122,7 +121,7 @@
     border: 1px solid var(--border-default, #30363d);
     border-radius: 6px;
     box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-    z-index: 10;
+    z-index: 1000;
     max-height: 200px;
     overflow-y: auto;
   }

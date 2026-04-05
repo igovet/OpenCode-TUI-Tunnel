@@ -1,5 +1,6 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { CanvasAddon } from '@xterm/addon-canvas';
 import '@xterm/xterm/css/xterm.css';
 
 export class TerminalManager {
@@ -10,6 +11,11 @@ export class TerminalManager {
   private sessionId: string | null = null;
   private element: HTMLElement;
   private reconnectTimeout: number | null = null;
+  private fitTimer: number | null = null;
+  private fitVisibilityTimer: number | null = null;
+  private touchElement: HTMLElement | null = null;
+  private touchStartListener: ((e: TouchEvent) => void) | null = null;
+  private touchMoveListener: ((e: TouchEvent) => void) | null = null;
   private exited = false;
 
   constructor(element: HTMLElement, cols: number, rows: number) {
@@ -21,6 +27,13 @@ export class TerminalManager {
       scrollback: 10000,
       allowProposedApi: true,
       fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      fontSize: 13,
+      lineHeight: 1.0,
+      letterSpacing: 0,
+      fontWeight: 'normal',
+      fontWeightBold: 'bold',
+      drawBoldTextInBrightColors: false,
+      overviewRulerWidth: 0,
       theme: {
         background: '#0d1117',
         foreground: '#e6edf3',
@@ -31,6 +44,16 @@ export class TerminalManager {
     this.fitAddon = new FitAddon();
     this.terminal.loadAddon(this.fitAddon);
     this.terminal.open(element);
+    this.setupTouchScroll(element);
+
+    // Use Canvas renderer for pixel-perfect TUI rendering (eliminates DOM sub-pixel gaps)
+    try {
+      const canvasAddon = new CanvasAddon();
+      this.terminal.loadAddon(canvasAddon);
+    } catch (e) {
+      console.warn('CanvasAddon unavailable, falling back to DOM renderer:', e);
+    }
+
     this.terminal.attachCustomKeyEventHandler(() => true);
 
     this.terminal.onData((data) => this.onData(data));
@@ -39,6 +62,50 @@ export class TerminalManager {
         this.ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
       }
     });
+  }
+
+  private setupTouchScroll(element: HTMLElement): void {
+    let startY = 0;
+    let accumulatedDelta = 0;
+
+    const onTouchStart = (e: TouchEvent) => {
+      startY = e.touches[0].clientY;
+      accumulatedDelta = 0;
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const currentY = e.touches[0].clientY;
+      const deltaY = startY - currentY; // positive = swipe up = scroll forward (older content)
+      startY = currentY; // reset for incremental scroll
+
+      accumulatedDelta += deltaY;
+
+      if (accumulatedDelta > 80) {
+        this.terminal.input('\x1b[6~'); // PageDown
+        accumulatedDelta -= 80;
+      } else if (accumulatedDelta < -80) {
+        this.terminal.input('\x1b[5~'); // PageUp
+        accumulatedDelta += 80;
+      }
+    };
+
+    const onTouchEnd = (e: TouchEvent) => {
+      // noop or reset if needed
+    };
+
+    // Use CAPTURE PHASE so we receive events before xterm's own handlers
+    // (xterm may call stopPropagation in bubble phase, but capture fires first)
+    element.addEventListener('touchstart', onTouchStart, { capture: true, passive: false });
+    element.addEventListener('touchmove', onTouchMove, { capture: true, passive: false });
+    element.addEventListener('touchend', onTouchEnd, { capture: true });
+
+    // Store for cleanup
+    this.touchElement = element;
+    this.touchStartListener = onTouchStart as EventListener;
+    this.touchMoveListener = onTouchMove as EventListener;
+    (this as any).touchEndListener = onTouchEnd as EventListener;
   }
 
   connect(sessionId: string): void {
@@ -116,6 +183,37 @@ export class TerminalManager {
     }
   }
 
+  scheduleFit(delay = 100): void {
+    if (this.fitTimer) {
+      window.clearTimeout(this.fitTimer);
+    }
+
+    this.fitTimer = window.setTimeout(() => {
+      this.fitTimer = null;
+      this.fit();
+    }, delay);
+  }
+
+  fitWhenReady(retries = 10, delay = 50): void {
+    if (this.element.clientWidth > 0 && this.element.clientHeight > 0) {
+      this.scheduleFit(0);
+      return;
+    }
+
+    if (retries <= 0) {
+      return;
+    }
+
+    if (this.fitVisibilityTimer) {
+      window.clearTimeout(this.fitVisibilityTimer);
+    }
+
+    this.fitVisibilityTimer = window.setTimeout(() => {
+      this.fitVisibilityTimer = null;
+      this.fitWhenReady(retries - 1, delay);
+    }, delay);
+  }
+
   onData(data: string): void {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: 'input', data }));
@@ -126,7 +224,38 @@ export class TerminalManager {
     this.onExitCb = cb;
   }
 
+  setFontSize(size: number): void {
+    this.terminal.options.fontSize = size;
+    this.scheduleFit(50);
+  }
+
   dispose(): void {
+    if (this.fitTimer) {
+      window.clearTimeout(this.fitTimer);
+      this.fitTimer = null;
+    }
+    if (this.fitVisibilityTimer) {
+      window.clearTimeout(this.fitVisibilityTimer);
+      this.fitVisibilityTimer = null;
+    }
+
+    if (this.touchElement && this.touchStartListener) {
+      this.touchElement.removeEventListener('touchstart', this.touchStartListener, {
+        capture: true,
+      });
+    }
+    if (this.touchElement && this.touchMoveListener) {
+      this.touchElement.removeEventListener('touchmove', this.touchMoveListener, { capture: true });
+    }
+    if (this.touchElement && (this as any).touchEndListener) {
+      this.touchElement.removeEventListener('touchend', (this as any).touchEndListener, {
+        capture: true,
+      });
+    }
+    this.touchElement = null;
+    this.touchStartListener = null;
+    this.touchMoveListener = null;
+
     this.disconnect();
     this.terminal.dispose();
   }

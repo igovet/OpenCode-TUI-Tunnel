@@ -8,7 +8,8 @@ export default defineConfig({
   format: ['esm'],
   target: 'node20',
   outDir: 'dist',
-  clean: true,
+  // Keep dist/web assets intact when server is rebuilt after web build.
+  clean: false,
   sourcemap: true,
   splitting: false,
 });

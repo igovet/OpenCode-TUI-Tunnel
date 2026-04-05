@@ -1,9 +1,7 @@
 <script lang="ts">
   import { workspace } from '../lib/workspace';
-  import { deleteSession } from '../lib/api';
   
   let { ongoHome, ongoWorkspace }: { ongoHome: () => void, ongoWorkspace: () => void } = $props();
-  let killingSessionIds = $state(new Set<string>());
   
   function activate(sessionId: string) {
     workspace.activateTab(sessionId);
@@ -15,27 +13,6 @@
     workspace.closeTab(sessionId);
     if ($workspace.tabs.length === 0) {
       ongoHome();
-    }
-  }
-
-  async function killSession(e: Event, sessionId: string) {
-    e.stopPropagation();
-    if (killingSessionIds.has(sessionId)) return;
-
-    killingSessionIds.add(sessionId);
-    killingSessionIds = new Set(killingSessionIds);
-
-    try {
-      await deleteSession(sessionId);
-      workspace.closeTab(sessionId);
-      if ($workspace.tabs.length === 0) {
-        ongoHome();
-      }
-    } catch (error) {
-      console.error(error);
-    } finally {
-      killingSessionIds.delete(sessionId);
-      killingSessionIds = new Set(killingSessionIds);
     }
   }
   
@@ -60,16 +37,6 @@
     >
       <span class="status-dot {tab.status}"></span>
       <span class="tab-title">{tab.title || tab.cwd.split('/').pop() || tab.sessionId.slice(0, 8)}</span>
-      <span class="tab-status" title={`Session status: ${tab.status}`}>{tab.status}</span>
-      <button
-        class="tab-kill"
-        onclick={(e) => killSession(e, tab.sessionId)}
-        aria-label="Kill session"
-        title="Kill session"
-        disabled={killingSessionIds.has(tab.sessionId)}
-      >
-        {killingSessionIds.has(tab.sessionId) ? '…' : '⚡'}
-      </button>
       <button class="tab-close" onclick={(e) => close(e, tab.sessionId)} aria-label="Close tab">×</button>
     </div>
   {/each}
@@ -104,7 +71,7 @@
     white-space: nowrap;
     transition: color var(--transition-fast), border-color var(--transition-fast);
     min-width: 100px;
-    max-width: 180px;
+    max-width: 200px;
   }
   .tab:hover { color: var(--text-secondary); background: var(--bg-elevated); }
   .tab.active { color: var(--text-primary); border-bottom-color: var(--accent-blue); }
@@ -116,13 +83,6 @@
     text-align: left;
   }
 
-  .tab-status {
-    font-size: 0.62rem;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-  }
-  
   .tab-close {
     background: none;
     border: none;
@@ -136,38 +96,6 @@
     align-items: center;
   }
 
-  .tab-kill {
-    background: none;
-    border: none;
-    color: #f0883e;
-    border-radius: 2px;
-    height: 20px;
-    min-width: 20px;
-    padding: 0 2px;
-    font-size: 0.85rem;
-    line-height: 1;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity var(--transition-fast), background var(--transition-fast), color var(--transition-fast);
-  }
-
-  .tab:hover .tab-kill,
-  .tab.active .tab-kill,
-  .tab-kill:focus-visible {
-    opacity: 1;
-    pointer-events: auto;
-  }
-
-  .tab-kill:hover:not(:disabled) {
-    background: var(--bg-overlay);
-    color: var(--accent-red);
-  }
-
-  .tab-kill:disabled {
-    opacity: 0.8;
-    cursor: wait;
-  }
-
   .tab-close:hover { background: var(--bg-overlay); color: var(--accent-red); }
 
   @media (max-width: 640px) {
@@ -177,25 +105,6 @@
       max-width: 140px;
       padding: 0 var(--space-2);
       gap: var(--space-1);
-    }
-
-    .tab-status {
-      display: none;
-    }
-
-    .tab-kill {
-      opacity: 1;
-      pointer-events: auto;
-      min-width: 24px;
-      height: 24px;
-      font-size: 0.95rem;
-    }
-  }
-
-  @media (hover: none), (pointer: coarse) {
-    .tab-kill {
-      opacity: 1;
-      pointer-events: auto;
     }
   }
 </style>

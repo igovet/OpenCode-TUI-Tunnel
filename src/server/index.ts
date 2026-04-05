@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,7 +9,6 @@ import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
 
 import type { AppConfig } from '../config/index.js';
-import { getConfigDir } from '../config/index.js';
 import {
   type Database,
   findManagedSessionByTmuxSessionName,
@@ -27,7 +26,6 @@ interface RuntimeState {
   app: FastifyInstance;
   db: Database;
   supervisor: SessionSupervisor;
-  pidFilePath: string;
 }
 
 export interface ServerStartInfo {
@@ -50,8 +48,6 @@ let stopInProgress: Promise<void> | null = null;
 
 const WS_DEFAULT_COLS = 120;
 const WS_DEFAULT_ROWS = 30;
-
-const signalHandlers = new Map<NodeJS.Signals, () => void>();
 
 function expandHomePath(inputPath: string): string {
   if (inputPath === '~') {
@@ -120,35 +116,6 @@ function resolveWebRoot(): string {
 
   const existing = candidates.find((candidate) => existsSync(candidate));
   return existing ?? candidates[0];
-}
-
-function registerSignalHandlers(): void {
-  if (signalHandlers.size > 0) {
-    return;
-  }
-
-  for (const signal of ['SIGINT', 'SIGTERM'] as const) {
-    const handler = () => {
-      void stopServer()
-        .then(() => {
-          process.exit(0);
-        })
-        .catch((error) => {
-          console.error(error);
-          process.exit(1);
-        });
-    };
-
-    signalHandlers.set(signal, handler);
-    process.once(signal, handler);
-  }
-}
-
-function removeSignalHandlers(): void {
-  for (const [signal, handler] of signalHandlers.entries()) {
-    process.off(signal, handler);
-  }
-  signalHandlers.clear();
 }
 
 function addCorsForNetworkMode(app: FastifyInstance, config: AppConfig): void {
@@ -294,7 +261,7 @@ function setupRoutes(
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to attach to tmux session';
-      const statusCode = /no server running|failed to connect|can\'t find session/i.test(message)
+      const statusCode = /no server running|failed to connect|can't find session/i.test(message)
         ? 404
         : 500;
       return reply.code(statusCode).send({ error: message });
@@ -525,17 +492,12 @@ export async function startServer(config: AppConfig): Promise<ServerStartInfo> {
     port: config.server.port,
   });
 
-  const pidFilePath = join(getConfigDir(), 'server.pid');
-  writeFileSync(pidFilePath, process.pid.toString(), 'utf8');
-
   runtimeState = {
     app,
     db,
     supervisor,
-    pidFilePath,
   };
 
-  registerSignalHandlers();
   app.log.info({ address }, 'opencode-tui-tunnel server listening');
 
   return { address };
@@ -551,21 +513,14 @@ export async function stopServer(): Promise<void> {
     runtimeState = null;
 
     if (!state) {
-      removeSignalHandlers();
       stopInProgress = null;
       return;
     }
-
-    removeSignalHandlers();
 
     try {
       await state.app.close();
     } finally {
       state.db.close();
-
-      if (existsSync(state.pidFilePath)) {
-        unlinkSync(state.pidFilePath);
-      }
 
       stopInProgress = null;
     }

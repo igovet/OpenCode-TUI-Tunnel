@@ -1,6 +1,18 @@
+export let deferredPrompt: any = null;
+
 export function registerServiceWorker() {
+  if (typeof window !== 'undefined') {
+    window.addEventListener('beforeinstallprompt', (e) => {
+      // Prevent the mini-infobar from appearing on mobile
+      e.preventDefault();
+      // Stash the event so it can be triggered later.
+      deferredPrompt = e;
+      console.log('[PWA] beforeinstallprompt event fired and stashed');
+    });
+  }
+
   if ('serviceWorker' in navigator) {
-    window.addEventListener('load', () => {
+    const register = () => {
       navigator.serviceWorker
         .register('/sw.js')
         .then((registration) => {
@@ -22,6 +34,12 @@ export function registerServiceWorker() {
           // Non-fatal: app works without service worker
           console.warn('[PWA] Service worker registration failed:', error);
         });
-    });
+    };
+
+    if (document.readyState === 'complete') {
+      register();
+    } else {
+      window.addEventListener('load', register);
+    }
   }
 }

@@ -7,11 +7,49 @@ export interface WorkspaceTab {
   status: 'running' | 'starting' | 'exited' | 'failed' | 'interrupted';
 }
 
+const STORAGE_KEY = 'opencode-tui-workspace';
+
+function loadFromStorage(): { tabs: WorkspaceTab[]; activeTabId: string | null } {
+  try {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      if (parsed && Array.isArray(parsed.tabs)) {
+        return { tabs: parsed.tabs, activeTabId: parsed.activeTabId || null };
+      }
+    }
+  } catch {}
+  return { tabs: [], activeTabId: null };
+}
+
+function saveToStorage(state: { tabs: WorkspaceTab[]; activeTabId: string | null }) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  } catch {}
+}
+
 function createWorkspaceStore() {
-  const { subscribe, update, set } = writable<{
+  const {
+    subscribe,
+    update: _update,
+    set,
+  } = writable<{
     tabs: WorkspaceTab[];
     activeTabId: string | null;
-  }>({ tabs: [], activeTabId: null });
+  }>(loadFromStorage());
+
+  function update(
+    fn: (state: { tabs: WorkspaceTab[]; activeTabId: string | null }) => {
+      tabs: WorkspaceTab[];
+      activeTabId: string | null;
+    },
+  ) {
+    _update((state) => {
+      const newState = fn(state);
+      saveToStorage(newState);
+      return newState;
+    });
+  }
 
   return {
     subscribe,
@@ -39,6 +77,18 @@ function createWorkspaceStore() {
     },
     activateTab(sessionId: string) {
       update((state) => ({ ...state, activeTabId: sessionId }));
+    },
+    swapToFront(sessionId: string) {
+      update((state) => {
+        const index = state.tabs.findIndex((t) => t.sessionId === sessionId);
+        if (index > 0) {
+          const newTabs = [...state.tabs];
+          const [tab] = newTabs.splice(index, 1);
+          newTabs.unshift(tab);
+          return { ...state, tabs: newTabs, activeTabId: sessionId };
+        }
+        return { ...state, activeTabId: sessionId };
+      });
     },
     updateTabStatus(sessionId: string, status: WorkspaceTab['status']) {
       update((state) => ({

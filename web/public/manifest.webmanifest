@@ -1,11 +1,12 @@
 {
-  "name": "OpenCode TUI Tunnel",
-  "short_name": "OCT",
+  "name": "OpenCode TUI",
+  "short_name": "OpenCode",
   "description": "Web terminal for opencode TUI sessions",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0d1117",
-  "theme_color": "#0d1117",
+  "display_override": ["standalone", "minimal-ui"],
+  "background_color": "#0d0d0d",
+  "theme_color": "#00ff88",
   "orientation": "any",
   "scope": "/",
   "icons": [
@@ -22,11 +23,17 @@
       "purpose": "any"
     },
     {
+      "src": "/icons/icon-maskable-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
       "src": "/icons/icon-maskable-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
     }
   ],
-  "categories": ["developer", "productivity", "utilities"]
+  "categories": ["developer-tools", "utilities"]
 }

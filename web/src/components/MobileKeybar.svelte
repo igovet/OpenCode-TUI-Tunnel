@@ -1,333 +1,256 @@
 <script lang="ts">
-  import { KEY_GROUPS, KEY_SEQUENCES } from '../lib/opencode-keybinds';
-  
-  // Terminal write function
-  let { write = () => {} }: { write?: (data: string) => void } = $props();
-  
-  let activeGroup = $state(0);
-  let expanded = $state(false);
-  let activeModifier = $state<'ctrl' | 'alt' | 'shift' | null>(null);
+  import { get } from 'svelte/store';
+  import { activeTerminalRef } from '../lib/activeTerminal';
 
-  const stickyModifiers = [
-    { id: 'ctrl' as const, label: 'CTRL' },
-    { id: 'alt' as const, label: 'ALT' },
-    { id: 'shift' as const, label: 'SHIFT' },
-  ];
+  let bottomOffset = $state(0);
+  let isMobile = $state(false);
+  let ctrlActive = $state(false);
+  let hiddenInput: HTMLInputElement | undefined = $state();
 
-  const quickCombos = [
-    { label: 'C-j', key: KEY_SEQUENCES['ctrl+j'], description: 'Ctrl+J / Newline (confirm)' },
-    { label: 'C-c', key: KEY_SEQUENCES['ctrl+c'], description: 'Ctrl+C / Cancel' },
-    { label: 'C-d', key: KEY_SEQUENCES['ctrl+d'], description: 'Ctrl+D / Quit' },
-    { label: 'C-l', key: KEY_SEQUENCES['ctrl+l'], description: 'Ctrl+L / Clear screen' },
-    { label: 'C-u', key: KEY_SEQUENCES['ctrl+u'], description: 'Ctrl+U / Delete line' },
-    { label: 'C-w', key: KEY_SEQUENCES['ctrl+w'], description: 'Ctrl+W / Delete word' },
-    { label: 'C-a', key: KEY_SEQUENCES['ctrl+a'], description: 'Ctrl+A / Start of line' },
-    { label: 'C-e', key: KEY_SEQUENCES['ctrl+e'], description: 'Ctrl+E / End of line' },
-  ];
-
-  const ctrlLetterPad = 'abcdefghijklmnopqrstuvwxyz'.split('');
-  
-  function toggleExpanded() { expanded = !expanded; }
-
-  function isModifierActive(mod: 'ctrl' | 'alt' | 'shift'): boolean {
-    return activeModifier === mod;
-  }
-  
-  function toggleModifier(mod: 'ctrl' | 'alt' | 'shift') {
-    const next = activeModifier === mod ? null : mod;
-    activeModifier = next;
-    if (next === 'ctrl') {
-      expanded = true;
+  function handleHiddenKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape' || e.key === 'Enter') {
+      ctrlActive = false;
+      hiddenInput?.blur();
     }
   }
 
-  function ctrlChar(letter: string): string {
-    const code = letter.toUpperCase().charCodeAt(0) - 64;
-    return String.fromCharCode(Math.max(1, code));
+  function handleHiddenBlur() {
+    ctrlActive = false;
   }
 
-  function sendSequence(sequence: string | undefined) {
-    if (!sequence) return;
-    write(sequence);
-    activeModifier = null;
-  }
-  
-  function sendKey(key: string) {
-    let finalKey = key;
+  $effect(() => {
+    if (ctrlActive && hiddenInput) {
+      hiddenInput.value = '';
+      hiddenInput.focus();
 
-    if (activeModifier === 'ctrl' && key.length === 1 && /[a-zA-Z]/.test(key)) {
-      finalKey = ctrlChar(key);
-    } else if (activeModifier === 'shift' && key.length === 1 && /[a-z]/.test(key)) {
-      finalKey = key.toUpperCase();
+      const inputHandler = (e: Event) => {
+        const target = e.target as HTMLInputElement;
+        if (!target.value) return;
+        
+        const char = target.value[0];
+        target.value = '';
+        
+        let seq = '';
+        const charMap: Record<string, string> = {
+          'c': '\x03', 'C': '\x03',
+          'z': '\x1a', 'Z': '\x1a',
+          'd': '\x04', 'D': '\x04',
+          'l': '\x0c', 'L': '\x0c',
+          'a': '\x01', 'A': '\x01',
+          'e': '\x05', 'E': '\x05',
+          'p': '\x10', 'P': '\x10',
+          'u': '\x15', 'U': '\x15',
+        };
+        
+        if (charMap[char]) {
+          seq = charMap[char];
+        } else if (/^[a-zA-Z]$/.test(char)) {
+          seq = String.fromCharCode(char.toUpperCase().charCodeAt(0) - 64);
+        } else {
+          seq = '\x1b' + char;
+        }
+        
+        sendKey(seq);
+        ctrlActive = false;
+        hiddenInput?.blur();
+      };
+
+      hiddenInput.addEventListener('input', inputHandler);
+
+      return () => {
+        hiddenInput?.removeEventListener('input', inputHandler);
+      };
     }
+  });
 
-    if (activeModifier === 'alt') {
-      finalKey = `\x1b${finalKey}`;
+  $effect(() => {
+    if (typeof window === 'undefined') return;
+    
+    isMobile = window.innerWidth <= 900;
+    const resizeHandler = () => {
+      isMobile = window.innerWidth <= 900;
+    };
+    window.addEventListener('resize', resizeHandler);
+
+    if (!window.visualViewport) return () => window.removeEventListener('resize', resizeHandler);
+    
+    const vvHandler = () => {
+      if (window.visualViewport) {
+        const keyboardHeight = window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
+        bottomOffset = Math.max(0, keyboardHeight);
+      }
+    };
+    window.visualViewport.addEventListener('resize', vvHandler);
+    window.visualViewport.addEventListener('scroll', vvHandler);
+    vvHandler();
+
+    return () => {
+      window.removeEventListener('resize', resizeHandler);
+      window.visualViewport?.removeEventListener('resize', vvHandler);
+      window.visualViewport?.removeEventListener('scroll', vvHandler);
+    };
+  });
+
+  function sendKey(seq: string) {
+    navigator.vibrate?.(8);
+    const term = get(activeTerminalRef);
+    if (term) {
+      // @ts-ignore - as requested by instructions
+      term.terminal.input(seq, true);
     }
-
-    write(finalKey);
-    activeModifier = null;
   }
 
-  function sendDefinedKey(key: string | undefined) {
-    if (!key) return;
-    sendKey(key);
+  async function handlePaste() {
+    navigator.vibrate?.(8);
+    try {
+      const text = await navigator.clipboard.readText();
+      const term = get(activeTerminalRef);
+      if (term && text) {
+        for (let i = 0; i < text.length; i++) {
+          // @ts-ignore
+          term.terminal.input(text[i], true);
+        }
+      }
+    } catch (err) {
+      console.error('Failed to read clipboard', err);
+    }
   }
 
-  function sendLetter(letter: string) {
-    sendKey(letter);
+  function makeTapHandler(action: () => void) {
+    let startX = 0, startY = 0, moved = false;
+    return {
+      touchstart: (e: TouchEvent) => {
+        startX = e.touches[0].clientX;
+        startY = e.touches[0].clientY;
+        moved = false;
+      },
+      touchmove: (e: TouchEvent) => {
+        const dx = Math.abs(e.touches[0].clientX - startX);
+        const dy = Math.abs(e.touches[0].clientY - startY);
+        if (dx > 8 || dy > 8) moved = true;
+      },
+      touchend: (e: TouchEvent) => {
+        if (!moved) {
+          e.preventDefault();
+          action();
+        }
+      }
+    };
   }
+
+  const keys = [
+    { seq: '\x1b[A', label: '↑' },
+    { seq: '\x1b[B', label: '↓' },
+    { seq: '\x1b[D', label: '←' },
+    { seq: '\x1b[C', label: '→' },
+    { seq: '\r', label: '⏎ Enter', cls: 'enter' },
+    { seq: '\x0a', label: '↵ NL', cls: 'enter' },
+    { seq: '\t', label: 'Tab' },
+    { seq: '\x1b', label: 'Esc' },
+    { seq: '\x7f', label: '⌫' },
+    { seq: '\x03', label: 'Ctrl+C', cls: 'danger' },
+    { seq: '\x1a', label: 'Ctrl+Z', cls: 'danger' },
+    { seq: '\x04', label: 'Ctrl+D' },
+    { seq: '\x0c', label: 'Ctrl+L' },
+    { seq: '\x01', label: 'Ctrl+A' },
+    { seq: '\x05', label: 'Ctrl+E' },
+    { seq: '\x10', label: 'Ctrl+P' }
+  ].map(k => ({ ...k, tap: makeTapHandler(() => sendKey(k.seq)) }));
+
+  const pasteTap = makeTapHandler(handlePaste);
+  const ctrlTap = makeTapHandler(() => { 
+    ctrlActive = !ctrlActive;
+    if (ctrlActive && hiddenInput) {
+      hiddenInput.value = '';
+      hiddenInput.focus();
+    }
+  });
 </script>
 
-<div class="keybar" class:expanded>
-  <!-- svelte-ignore a11y_click_events_have_key_events -->
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="keybar-header" onclick={toggleExpanded}>
-    <div class="keybar-groups">
-      {#each KEY_GROUPS as group, i}
-        <button 
-          class="group-tab" 
-          class:active={activeGroup === i}
-          onclick={(e) => { e.stopPropagation(); activeGroup = i; expanded = true; }}
-        >{group.name}</button>
-      {/each}
-    </div>
-    <button class="expand-toggle">{expanded ? '▼' : '▲'}</button>
-  </div>
-
-  <div class="modifier-row">
-    {#each stickyModifiers as mod}
+{#if isMobile}
+  <input
+    type="text"
+    bind:this={hiddenInput}
+    onkeydown={handleHiddenKeydown}
+    onblur={handleHiddenBlur}
+    style="opacity: 0; position: absolute; left: -9999px; height: 1px; width: 1px;"
+    autocomplete="off"
+    autocorrect="off"
+    autocapitalize="off"
+    spellcheck="false"
+  />
+  <div class="keybar" style="bottom: {bottomOffset}px">
+    <button
+      class="key {ctrlActive ? 'ctrl-active' : ''}"
+      ontouchstart={ctrlTap.touchstart}
+      ontouchmove={ctrlTap.touchmove}
+      ontouchend={ctrlTap.touchend}
+    >Ctrl</button>
+    {#each keys as key}
       <button
-        class="mod-btn"
-        class:active={isModifierActive(mod.id)}
-        title={`Toggle ${mod.label}`}
-        onclick={() => toggleModifier(mod.id)}
-      >
-        {mod.label}
-      </button>
+        class="key {key.cls ?? ''}"
+        ontouchstart={key.tap.touchstart}
+        ontouchmove={key.tap.touchmove}
+        ontouchend={key.tap.touchend}
+      >{key.label}</button>
     {/each}
+    <button
+      class="key"
+      ontouchstart={pasteTap.touchstart}
+      ontouchmove={pasteTap.touchmove}
+      ontouchend={pasteTap.touchend}
+    >Paste</button>
   </div>
-
-  <div class="sticky-row">
-    {#each quickCombos as combo}
-      <button
-        class="key-btn quick-combo"
-        title={combo.description}
-        onclick={() => sendSequence(combo.key)}
-      >
-        {combo.label}
-      </button>
-    {/each}
-  </div>
-  
-  {#if expanded}
-    {#if isModifierActive('ctrl')}
-      <div class="ctrl-letter-pad">
-        {#each ctrlLetterPad as letter}
-          <button class="key-btn letter-btn" onclick={() => sendLetter(letter)}>
-            {letter}
-          </button>
-        {/each}
-      </div>
-    {/if}
-
-    <div class="keybar-keys">
-      {#each KEY_GROUPS[activeGroup].keys as key}
-        <button 
-          class="key-btn"
-          class:modifier={key.group === 'modifier' || key.group === 'session'}
-          title={key.description}
-          onclick={() => sendDefinedKey(key.key)}
-        >
-          {key.label}
-        </button>
-      {/each}
-    </div>
-  {/if}
-</div>
+{/if}
 
 <style>
   .keybar {
-    background: var(--bg-surface);
-    border-top: 1px solid var(--border-default);
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 9999;
+    height: 44px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    background: #1a1a1a;
+    border-top: 1px solid #333;
+  }
+  .keybar::-webkit-scrollbar { display: none; }
+
+  .key {
+    background: #2a2a2a;
+    border: 1px solid #444;
+    border-radius: 4px;
+    color: #ccc;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px;
+    padding: 4px 8px;
+    white-space: nowrap;
     flex-shrink: 0;
+    cursor: pointer;
     user-select: none;
     -webkit-user-select: none;
   }
-
-  .sticky-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-1);
-    padding: var(--space-2);
-    border-top: 1px solid var(--border-muted);
-    overflow-x: auto;
-    scrollbar-width: none;
+  .key.enter {
+    background: #1a3a1a;
+    border-color: #3a7a3a;
+    color: #7fc77f;
+    min-width: 60px;
   }
-  .sticky-row::-webkit-scrollbar { display: none; }
-
-  .modifier-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-1);
-    padding: var(--space-2);
-    border-top: 1px solid var(--border-muted);
-    border-bottom: 1px solid var(--border-muted);
+  .key.danger {
+    background: #3a1a1a;
+    border-color: #7a3a3a;
+    color: #c77f7f;
   }
-
-  .mod-btn {
-    min-width: 58px;
-    height: 32px;
-    padding: 0 var(--space-2);
-    border: 1px solid var(--accent-cyan);
-    border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--accent-cyan);
-    font-family: var(--font-mono);
-    font-size: var(--font-size-xs);
-    font-weight: 600;
-    cursor: pointer;
-    transition: background var(--transition-fast), color var(--transition-fast);
-  }
-
-  .mod-btn.active {
-    color: #0d1117;
-    background: var(--accent-cyan);
-  }
-
-  .mod-btn:hover {
-    background: rgba(56, 139, 253, 0.2);
-  }
-  
-  .keybar-header {
-    display: flex;
-    align-items: center;
-    padding: 0 var(--space-2);
-    height: 36px;
-    cursor: pointer;
-  }
-  
-  .keybar-groups {
-    display: flex;
-    gap: 2px;
-    flex: 1;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-  .keybar-groups::-webkit-scrollbar { display: none; }
-  
-  .group-tab {
-    padding: var(--space-1) var(--space-3);
-    background: none;
-    border: 1px solid transparent;
-    border-radius: var(--radius-sm);
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: var(--font-size-xs);
-    cursor: pointer;
-    white-space: nowrap;
-    transition: all var(--transition-fast);
-  }
-  .group-tab.active {
-    color: var(--accent-blue);
-    border-color: var(--accent-blue);
-    background: rgba(88, 166, 255, 0.1);
-  }
-  .group-tab:hover:not(.active) {
-    color: var(--text-secondary);
-    background: var(--bg-elevated);
-  }
-  
-  .expand-toggle {
-    background: none;
-    border: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    font-size: var(--font-size-xs);
-    padding: var(--space-1);
-    flex-shrink: 0;
-  }
-  
-  .keybar-keys {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-1);
-    padding: var(--space-2);
-    border-top: 1px solid var(--border-muted);
-    max-height: 120px;
-    overflow-y: auto;
-  }
-
-  .ctrl-letter-pad {
-    display: grid;
-    grid-template-columns: repeat(9, minmax(0, 1fr));
-    gap: var(--space-1);
-    padding: var(--space-2);
-    border-top: 1px solid var(--border-muted);
-  }
-  
-  .key-btn {
-    min-width: 44px;
-    height: 36px;
-    padding: 0 var(--space-2);
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-sm);
-    color: var(--text-primary);
-    font-family: var(--font-mono);
-    font-size: var(--font-size-xs);
-    cursor: pointer;
-    transition: background var(--transition-fast), border-color var(--transition-fast);
-    touch-action: manipulation;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .key-btn:hover, .key-btn:active {
-    background: var(--bg-overlay);
-    border-color: var(--accent-blue);
-  }
-  .key-btn.modifier {
-    border-color: var(--accent-cyan);
-    color: var(--accent-cyan);
-  }
-
-  .quick-combo {
-    min-width: 50px;
-    border-color: rgba(88, 166, 255, 0.45);
-    color: var(--accent-blue);
-  }
-
-  .letter-btn {
-    min-width: 0;
-    height: 32px;
-    text-transform: lowercase;
-  }
-  
-  /* On desktop, show the keybar more compactly */
-  @media (min-width: 1024px) {
-    .keybar {
-      display: flex;
-      flex-direction: row;
-      align-items: center;
-      height: 40px;
-    }
-    .keybar.expanded {
-      flex-direction: column;
-      height: auto;
-    }
-    .keybar-header {
-      flex: none;
-    }
-  }
-  
-  /* On mobile, ensure minimum tap target sizes */
-  @media (max-width: 640px) {
-    .key-btn {
-      min-width: 48px;
-      height: 40px;
-    }
-
-    .ctrl-letter-pad {
-      grid-template-columns: repeat(7, minmax(0, 1fr));
-    }
+  .key.ctrl-active {
+    background: #4a2200;
+    border-color: #aa6600;
+    color: #ffaa44;
   }
 </style>

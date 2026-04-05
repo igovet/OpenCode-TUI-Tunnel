@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="termGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1e1e2e" />
+      <stop offset="100%" stop-color="#313244" />
+    </linearGradient>
+    <linearGradient id="borderGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#cba6f7" />
+      <stop offset="100%" stop-color="#89b4fa" />
+    </linearGradient>
+  </defs>
+
+  <g transform="translate(256, 256) rotate(12) translate(-256, -256)">
+    <!-- Rectangle standing on its corner -->
+    <rect x="136" y="76" width="240" height="360" rx="32" fill="url(#termGrad)" stroke="#ffffff" stroke-width="28" stroke-linejoin="round" transform="rotate(45 256 256)" />
+    
+    <!-- Inner design -->
+    <path d="M190 220 L230 256 L190 292" fill="none" stroke="#a6e3a1" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" />
+    <line x1="250" y1="292" x2="310" y2="292" stroke="#a6e3a1" stroke-width="24" stroke-linecap="round" />
+  </g>
+</svg>
