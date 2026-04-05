@@ -17,6 +17,7 @@ export class TerminalManager {
   private touchStartListener: ((e: TouchEvent) => void) | null = null;
   private touchMoveListener: ((e: TouchEvent) => void) | null = null;
   private exited = false;
+  private streamReady = false;
 
   constructor(element: HTMLElement, cols: number, rows: number) {
     this.element = element;
@@ -114,6 +115,7 @@ export class TerminalManager {
 
   connect(sessionId: string): void {
     this.exited = false;
+    this.streamReady = false;
     this.sessionId = sessionId;
     this.connectWs();
   }
@@ -127,6 +129,7 @@ export class TerminalManager {
     this.ws.binaryType = 'arraybuffer';
 
     this.ws.onopen = () => {
+      this.streamReady = false;
       this.ws?.send(
         JSON.stringify({ type: 'hello', cols: this.terminal.cols, rows: this.terminal.rows }),
       );
@@ -138,19 +141,53 @@ export class TerminalManager {
 
     this.ws.onmessage = (event) => {
       if (typeof event.data === 'string') {
-        const msg = JSON.parse(event.data);
-        if (msg.type === 'exit') {
+        let msg: unknown;
+        try {
+          msg = JSON.parse(event.data);
+        } catch {
+          this.terminal.write(event.data);
+          return;
+        }
+
+        if (!msg || typeof msg !== 'object' || !('type' in msg)) {
+          return;
+        }
+
+        const typed = msg as { type: string; message?: string; exitCode?: number; status?: string };
+
+        if (typed.type === 'ready') {
+          this.streamReady = true;
+          return;
+        }
+
+        if (typed.type === 'status') {
+          if (
+            !this.exited &&
+            (typed.status === 'exited' ||
+              typed.status === 'failed' ||
+              typed.status === 'interrupted')
+          ) {
+            this.markSessionEnded(`Session ended (${typed.status})`, 1);
+          }
+          return;
+        }
+
+        if (typed.type === 'exit') {
           this.exited = true;
-          this.terminal.writeln(`\r\n\x1b[33mSession ended (code ${msg.exitCode})\x1b[0m`);
+          this.terminal.writeln(`\r\n\x1b[33mSession ended (code ${typed.exitCode})\x1b[0m`);
           this.sessionId = null;
           if (this.reconnectTimeout) {
             clearTimeout(this.reconnectTimeout);
             this.reconnectTimeout = null;
           }
-          this.onExitCb?.(msg.exitCode);
+          this.onExitCb?.(typed.exitCode ?? 1);
           this.ws?.close();
-        } else if (msg.type === 'error') {
-          this.terminal.writeln(`\x1b[31mError: ${msg.message}\x1b[0m`);
+        } else if (typed.type === 'error') {
+          this.terminal.writeln(`\x1b[31mError: ${typed.message ?? 'unknown error'}\x1b[0m`);
+          if (!this.streamReady) {
+            this.markSessionEnded('Session ended', 1);
+            this.ws?.close();
+          }
         }
       } else {
         this.terminal.write(new Uint8Array(event.data));
@@ -158,6 +195,11 @@ export class TerminalManager {
     };
 
     this.ws.onclose = () => {
+      if (this.sessionId && !this.streamReady && !this.exited) {
+        this.markSessionEnded('Session ended', 1);
+        return;
+      }
+
       if (this.sessionId && !this.exited) {
         this.reconnectTimeout = window.setTimeout(() => this.connectWs(), 2000);
       }
@@ -171,6 +213,7 @@ export class TerminalManager {
 
   disconnect(): void {
     this.sessionId = null;
+    this.streamReady = false;
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
     }
@@ -231,6 +274,21 @@ export class TerminalManager {
 
   onExit(cb: (code: number) => void): void {
     this.onExitCb = cb;
+  }
+
+  private markSessionEnded(message: string, code: number): void {
+    if (this.exited) {
+      return;
+    }
+
+    this.exited = true;
+    this.terminal.writeln(`\r\n\x1b[33m${message}\x1b[0m`);
+    this.sessionId = null;
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+    this.onExitCb?.(code);
   }
 
   setFontSize(size: number): void {

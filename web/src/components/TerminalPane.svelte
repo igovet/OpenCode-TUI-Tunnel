@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { TerminalManager } from '../lib/terminal';
-  import { workspace } from '../lib/workspace';
+  import { workspace, isTerminalTabEnded } from '../lib/workspace';
   import { activeTerminalWrite, activeTerminalRef } from '../lib/activeTerminal';
   import { zoomState, setZoom, registerManager } from '../lib/zoomStore.svelte';
 
@@ -15,6 +15,9 @@
 
   let resizeTimer: ReturnType<typeof setTimeout> | null = null;
   let ongoingResizeObserver: ResizeObserver | null = null;
+
+  let tab = $derived($workspace.tabs.find((t) => t.sessionId === sessionId));
+  let tabEnded = $derived(tab ? isTerminalTabEnded(tab.status) : false);
 
   function setupResizeObserver(el: HTMLElement) {
     ongoingResizeObserver = new ResizeObserver(() => {
@@ -77,8 +80,12 @@
           setupResizeObserver(container);
 
           // Step 3: connect AFTER terminal is open and rendered
-          manager.connect(sessionId);
-          console.log('[TerminalPane] connect() called for', sessionId);
+          if (!tabEnded) {
+            manager.connect(sessionId);
+            console.log('[TerminalPane] connect() called for', sessionId);
+          } else {
+            manager.terminal.writeln('\r\n\x1b[33mSession ended\x1b[0m');
+          }
 
           if (isActive) {
             manager.terminal.focus();

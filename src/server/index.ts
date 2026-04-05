@@ -371,12 +371,34 @@ function setupRoutes(
         }
       };
 
+      const closeWithError = (message: string, reason: string): void => {
+        sendJson({ type: 'error', message });
+        closeHandle();
+        try {
+          ws.close(1008, reason);
+        } catch {
+          // best-effort close
+        }
+      };
+
+      const withHandle = (operation: (active: TmuxPtyHandle) => void): void => {
+        if (!handle) {
+          sendJson({ type: 'error', message: 'Session stream is closed' });
+          return;
+        }
+
+        try {
+          operation(handle);
+        } catch {
+          closeWithError('Session ended', 'Session stream unavailable');
+        }
+      };
+
       try {
         handle = supervisor.attach(id, cols, rows);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to attach to session';
-        sendJson({ type: 'error', message });
-        ws.close(1008, 'Session not found');
+        closeWithError(message, 'Session unavailable');
         return;
       }
 
@@ -418,7 +440,7 @@ function setupRoutes(
           case 'hello': {
             const helloCols = toPositiveInt(parsed.cols, cols);
             const helloRows = toPositiveInt(parsed.rows, rows);
-            handle.resize(helloCols, helloRows);
+            withHandle((active) => active.resize(helloCols, helloRows));
             sendJson({ type: 'status', status: supervisor.get(id)?.status ?? 'running' });
             return;
           }
@@ -428,13 +450,14 @@ function setupRoutes(
               return;
             }
 
-            handle.write(parsed.data);
+            const inputData = parsed.data;
+            withHandle((active) => active.write(inputData));
             return;
           }
           case 'resize': {
             const resizedCols = toPositiveInt(parsed.cols, cols);
             const resizedRows = toPositiveInt(parsed.rows, rows);
-            handle.resize(resizedCols, resizedRows);
+            withHandle((active) => active.resize(resizedCols, resizedRows));
             return;
           }
           case 'ping': {

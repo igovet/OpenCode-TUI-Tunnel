@@ -7,6 +7,10 @@ export interface WorkspaceTab {
   status: 'running' | 'starting' | 'exited' | 'failed' | 'interrupted';
 }
 
+export function isTerminalTabEnded(status: WorkspaceTab['status']): boolean {
+  return status === 'exited' || status === 'failed' || status === 'interrupted';
+}
+
 const STORAGE_KEY = 'opencode-tui-workspace';
 
 function loadFromStorage(): { tabs: WorkspaceTab[]; activeTabId: string | null } {
@@ -57,7 +61,13 @@ function createWorkspaceStore() {
       update((state) => {
         const existing = state.tabs.find((t) => t.sessionId === session.sessionId);
         if (existing) {
-          return { ...state, activeTabId: session.sessionId };
+          return {
+            ...state,
+            tabs: state.tabs.map((tab) =>
+              tab.sessionId === session.sessionId ? { ...tab, ...session } : tab,
+            ),
+            activeTabId: session.sessionId,
+          };
         }
         return {
           tabs: [...state.tabs, session],
