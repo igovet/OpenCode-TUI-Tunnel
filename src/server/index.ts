@@ -35,6 +35,8 @@ export interface ServerStartInfo {
 interface StreamSocket {
   send(data: string | Buffer): void;
   close(code?: number, reason?: string): void;
+  on(event: 'message', listener: (raw: unknown) => void): void;
+  on(event: 'close' | 'error', listener: () => void): void;
 }
 
 type WebSocketIncomingMessage =
@@ -342,7 +344,8 @@ function setupRoutes(
     '/api/sessions/:id/stream',
     { websocket: true },
     (connection, request) => {
-      const ws = connection.socket;
+      const ws =
+        (connection as { socket?: StreamSocket }).socket ?? (connection as unknown as StreamSocket);
       const cols = toPositiveInt(request.query.cols, WS_DEFAULT_COLS);
       const rows = toPositiveInt(request.query.rows, WS_DEFAULT_ROWS);
       const { id } = request.params;

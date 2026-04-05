@@ -162,6 +162,11 @@ export class TerminalManager {
         this.reconnectTimeout = window.setTimeout(() => this.connectWs(), 2000);
       }
     };
+
+    this.ws.onerror = (event) => {
+      console.error('WebSocket error for session', this.sessionId, event);
+      this.terminal.writeln('\x1b[31mWebSocket connection error\x1b[0m');
+    };
   }
 
   disconnect(): void {
