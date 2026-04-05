@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, tick } from 'svelte';
   import { TerminalManager } from '../lib/terminal';
   import { workspace } from '../lib/workspace';
   import { activeTerminalWrite, activeTerminalRef } from '../lib/activeTerminal';
@@ -43,7 +43,7 @@
   onMount(() => {
     manager = new TerminalManager(container, 80, 24);
     unregisterManager = registerManager(manager);
-    manager.connect(sessionId);
+    // NOTE: connect() is called AFTER open() — see initialRo below
     
     manager.onExit((code) => {
       workspace.updateTabStatus(sessionId, code === 0 ? 'exited' : 'failed');
@@ -55,19 +55,37 @@
       const { width, height } = entry.contentRect;
       if (!opened && width > 0 && height > 0) {
         opened = true;
-        containerReady = true;
-        
-        manager?.open();
-        manager?.fitAddon.fit();
-        
-        initialRo.disconnect();
-        setupResizeObserver(container);
+        (async () => {
+          // Step 1: mark container ready so Svelte removes placeholder + opacity becomes 1
+          containerReady = true;
+          console.log('[TerminalPane] containerReady set, waiting for tick...');
 
-        if (isActive) {
-          manager?.terminal.focus();
-          activeTerminalWrite.set((data) => manager!.onData(data)); 
-          activeTerminalRef.set(manager);
-        }
+          // Step 2: wait for Svelte DOM flush before open/fit/connect
+          await tick();
+          console.log('[TerminalPane] tick done, calling open()...');
+
+          if (!manager) return;
+          manager.open();
+          console.log('[TerminalPane] open() done');
+
+          try {
+            manager.fitAddon.fit();
+            console.log('[TerminalPane] fit() done, cols:', manager.terminal.cols, 'rows:', manager.terminal.rows);
+          } catch (_) {}
+
+          initialRo.disconnect();
+          setupResizeObserver(container);
+
+          // Step 3: connect AFTER terminal is open and rendered
+          manager.connect(sessionId);
+          console.log('[TerminalPane] connect() called for', sessionId);
+
+          if (isActive) {
+            manager.terminal.focus();
+            activeTerminalWrite.set((data) => manager!.onData(data));
+            activeTerminalRef.set(manager);
+          }
+        })();
       }
     });
     initialRo.observe(container);
@@ -184,20 +202,20 @@
   }
 
   .terminal-placeholder {
-    width: 100%;
-    height: 100%;
+    position: absolute;
+    inset: 0;
   }
 
   .terminal-container {
-    height: 100%;
-    min-height: 0;
-    min-width: 0;
-    width: 100%;
+    position: absolute;
+    inset: 0;
     overflow: hidden;
     background: #0d1117;
-    display: flex;
-    justify-content: center;
-    align-items: flex-start;
+  }
+
+  :global(.terminal-pane .xterm) {
+    width: 100%;
+    height: 100%;
   }
 
   :global(.terminal-pane .xterm-screen canvas) {
