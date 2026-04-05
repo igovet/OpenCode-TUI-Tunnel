@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": [
+      "node"
+    ],
+    "lib": [
+      "ES2023"
+    ]
+  },
+  "include": [
+    "src/**/*.ts",
+    "tsup.config.ts",
+    "vite.config.ts"
+  ]
+}
