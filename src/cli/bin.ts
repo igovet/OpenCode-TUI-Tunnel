@@ -7,6 +7,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 import { Command } from 'commander';
 
@@ -28,6 +29,11 @@ const program = new Command();
 const RESET_COLOR = '\x1b[0m';
 const GREEN = '\x1b[32m';
 const RED = '\x1b[31m';
+const moduleDir = dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
+const packageJsonPath = join(moduleDir, '..', '..', 'package.json');
+const packageJson = require(packageJsonPath) as { version?: unknown };
+const cliVersion = typeof packageJson.version === 'string' ? packageJson.version : '0.0.0';
 
 interface SessionSummaryRow {
   id: string;
@@ -61,8 +67,6 @@ async function commandPath(command: string): Promise<string | null> {
 }
 
 function resolvePackagedWebIndex(): string {
-  const moduleDir = dirname(fileURLToPath(import.meta.url));
-
   return join(moduleDir, '..', '..', 'dist', 'web', 'index.html');
 }
 
@@ -248,7 +252,7 @@ function printDoctorResult(ok: boolean, message: string): void {
 program
   .name('opencode-tui-tunnel')
   .description('Web terminal multiplexer for opencode TUI sessions')
-  .version('0.1.0');
+  .version(cliVersion);
 
 registerStartCommand(program);
 registerStatusCommand(program);
