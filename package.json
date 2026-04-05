@@ -1,6 +1,11 @@
 {
   "name": "@igovet/opencode-tui-tunnel",
-  "version": "0.1.0",
+  "author": {
+    "name": "Igor Vetrov",
+    "email": "igovet@gmail.com",
+    "url": "https://vetrov.dev"
+  },
+  "version": "0.1.1",
   "description": "Web terminal multiplexer for opencode TUI sessions — access your opencode processes from any browser",
   "keywords": [
     "opencode",

@@ -159,7 +159,12 @@ export class SessionSupervisor {
         interrupted_reason: null,
       });
 
-      logEvent(this.db, id, 'session_started', { tmuxName, cwd, cols: sessionCols, rows: sessionRows });
+      logEvent(this.db, id, 'session_started', {
+        tmuxName,
+        cwd,
+        cols: sessionCols,
+        rows: sessionRows,
+      });
 
       return sessionInfo;
     } catch (error) {
@@ -244,12 +249,23 @@ export class SessionSupervisor {
       throw new Error(`Session not found: ${id}`);
     }
 
+    if (current.status !== 'running' && current.status !== 'starting') {
+      throw new Error(`Session is ${current.status} and cannot be attached`);
+    }
+
     current.cols = cols;
     current.rows = rows;
     current.clientCount += 1;
     this.sessions.set(id, current);
 
-    const baseHandle = attachPty(current.tmuxName, cols, rows);
+    let baseHandle: TmuxPtyHandle;
+    try {
+      baseHandle = attachPty(current.tmuxName, cols, rows);
+    } catch (error) {
+      current.clientCount = Math.max(0, current.clientCount - 1);
+      this.sessions.set(id, current);
+      throw error;
+    }
 
     return new CountingPtyHandle(baseHandle, () => {
       const fresh = this.sessions.get(id);
