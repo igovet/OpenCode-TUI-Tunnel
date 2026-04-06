@@ -238,7 +238,13 @@ export function attachPty(sessionName: string, cols: number, rows: number): Tmux
     rows,
     name: 'xterm-256color',
     cwd: process.cwd(),
-    env: getTmuxExecEnv(),
+    env: {
+      ...getTmuxExecEnv(),
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      LANG: 'en_US.UTF-8',
+      LC_ALL: 'en_US.UTF-8',
+    },
   });
 
   return new TmuxPtyHandleImpl(pty);

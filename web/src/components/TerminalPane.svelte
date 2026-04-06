@@ -225,9 +225,9 @@
   }
 
   :global(.terminal-pane .xterm-screen canvas) {
-    image-rendering: auto;
+    image-rendering: pixelated;
     touch-action: pan-y;
-    transform: none !important;
+    transform: translateZ(0) !important;
   }
 
   .terminal-pane.active {
@@ -238,6 +238,7 @@
     width: 100% !important;
     background-color: #0d1117 !important;
     overflow-y: hidden !important;
+    overflow-x: hidden !important;
     scrollbar-width: none !important; /* Firefox */
     overscroll-behavior: contain;
     touch-action: pan-y;
@@ -247,5 +248,23 @@
   :global(.terminal-pane .xterm-viewport::-webkit-scrollbar) {
     display: none !important;
     width: 0 !important;
+  }
+
+  :global(.xterm-rows),
+  :global(.xterm-row) {
+    line-height: normal !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  :global(.terminal-pane .xterm) {
+    font-variant-ligatures: none !important;
+    font-feature-settings: "liga" 0, "calt" 0 !important;
+  }
+
+  :global(.terminal-pane .xterm-screen) {
+    display: flex;
+    justify-content: center;
+    overflow: hidden !important;
   }
 </style>

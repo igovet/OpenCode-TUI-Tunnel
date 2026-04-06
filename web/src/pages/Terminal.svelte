@@ -167,6 +167,7 @@
   
   :global(.xterm-viewport) {
     background-color: transparent !important;
+    overflow-x: hidden !important;
   }
   
   .overlay {

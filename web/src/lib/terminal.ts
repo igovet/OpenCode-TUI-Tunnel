@@ -19,6 +19,8 @@ export class TerminalManager {
   private streamReady = false;
   private lastSentCols = 0;
   private lastSentRows = 0;
+  private _handleFocusRefresh?: () => void;
+  private _webglAddon?: import('@xterm/addon-webgl').WebglAddon;
 
   constructor(element: HTMLElement, cols: number, rows: number) {
     this.element = element;
@@ -28,6 +30,9 @@ export class TerminalManager {
       cursorBlink: true,
       scrollback: 10000,
       allowProposedApi: true,
+      altClickMovesCursor: false,
+      macOptionIsMeta: true,
+      rescaleOverlappingGlyphs: true,
       fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
       fontSize: 14,
       lineHeight: 1.0,
@@ -35,7 +40,10 @@ export class TerminalManager {
       fontWeight: 'normal',
       fontWeightBold: 'bold',
       drawBoldTextInBrightColors: false,
+      minimumContrastRatio: 1,
       overviewRuler: { width: 0 },
+      customGlyphs: true,
+      allowTransparency: false,
       theme: {
         background: '#0d1117',
         foreground: '#e6edf3',
@@ -68,7 +76,16 @@ export class TerminalManager {
   }
 
   async open(): Promise<void> {
+    await document.fonts.ready;
+    await document.fonts.load('14px "JetBrains Mono"');
     this.terminal.open(this.element);
+
+    // Unicode 11 support: TUI apps use modern box-drawing and wide chars that
+    // xterm.js mishandles with its default Unicode 6 tables.
+    const { Unicode11Addon } = await import('@xterm/addon-unicode11');
+    const unicode11Addon = new Unicode11Addon();
+    this.terminal.loadAddon(unicode11Addon);
+    this.terminal.unicode.activeVersion = '11';
 
     // Try WebGL first — fallback is xterm's built-in DOM renderer
     try {
@@ -77,11 +94,20 @@ export class TerminalManager {
       // If WebGL context is lost (e.g., GPU reset), xterm falls back to built-in DOM renderer.
       webglAddon.onContextLoss(() => {
         webglAddon.dispose();
+        this._webglAddon = undefined;
       });
       this.terminal.loadAddon(webglAddon);
+      this._webglAddon = webglAddon;
     } catch (e) {
       console.warn('WebglAddon unavailable, using built-in DOM renderer:', e);
     }
+
+    window.addEventListener(
+      'focus',
+      (this._handleFocusRefresh = () => {
+        this.terminal.refresh(0, this.terminal.rows - 1);
+      }),
+    );
 
     this.setupTouchScroll(this.element);
   }
@@ -105,10 +131,18 @@ export class TerminalManager {
       accumulatedDelta += deltaY;
 
       if (accumulatedDelta > 80) {
-        this.terminal.input('\x1b[6~'); // PageDown
+        if (this.terminal.buffer.active.type === 'alternate') {
+          this.terminal.input('\x1b[B'); // arrow down
+        } else {
+          this.terminal.scrollLines(1);
+        }
         accumulatedDelta -= 80;
       } else if (accumulatedDelta < -80) {
-        this.terminal.input('\x1b[5~'); // PageUp
+        if (this.terminal.buffer.active.type === 'alternate') {
+          this.terminal.input('\x1b[A'); // arrow up
+        } else {
+          this.terminal.scrollLines(-1);
+        }
         accumulatedDelta += 80;
       }
     };
@@ -247,6 +281,9 @@ export class TerminalManager {
 
     try {
       this.fitAddon.fit();
+      if (this._webglAddon) {
+        this._webglAddon.clearTextureAtlas();
+      }
       try {
         localStorage.setItem('termLastCols', String(this.terminal.cols));
         localStorage.setItem('termLastRows', String(this.terminal.rows));
@@ -318,6 +355,9 @@ export class TerminalManager {
   }
 
   dispose(): void {
+    if (this._handleFocusRefresh) {
+      window.removeEventListener('focus', this._handleFocusRefresh);
+    }
     if (this.fitTimer) {
       window.clearTimeout(this.fitTimer);
       this.fitTimer = null;

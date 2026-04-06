@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -360,6 +361,7 @@ function setupRoutes(
       let handleClosed = false;
       let ptyPausedForBackpressure = false;
       let backpressureTimer: NodeJS.Timeout | null = null;
+      const decoder = new StringDecoder('utf8');
 
       const clearBackpressureTimer = (): void => {
         if (!backpressureTimer) {
@@ -405,6 +407,7 @@ function setupRoutes(
 
       const closeHandle = () => {
         clearBackpressureTimer();
+        decoder.end();
 
         if (!handle || handleClosed) {
           return;
@@ -459,8 +462,11 @@ function setupRoutes(
 
       handle.onData((data) => {
         try {
+          const raw = Buffer.isBuffer(data) ? data : Buffer.from(data as string, 'utf8');
+
           // Strip OpenTUI any-event mouse tracking toggles to prevent xterm.js hover redraw flicker.
-          const output = (Buffer.isBuffer(data) ? data.toString('utf8') : data)
+          const output = decoder
+            .write(raw)
             .replaceAll('\x1b[?1003h', '')
             .replaceAll('\x1b[?1003l', '');
 
