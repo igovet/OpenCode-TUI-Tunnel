@@ -97,7 +97,7 @@ export async function runApplyUpdateWorker(input: { targetVersion: string }): Pr
       skipReason: null,
     });
 
-    throw new Error(`Auto-update install failed: ${failureMessage}`);
+    throw new Error(`Auto-update install failed: ${failureMessage}`, { cause: error });
   } finally {
     releaseUpdateLockIfOwnedByCurrentProcess();
   }

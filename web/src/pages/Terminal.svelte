@@ -24,13 +24,18 @@
     load()
     
     manager = new TerminalManager(terminalContainer, 80, 24)
-    manager.connect(sessionId)
     manager.onExit((code) => {
       exitCode = code
     })
     
-    // Fit initially and on resize
-    setTimeout(handleResize, 50)
+    // Correct order: open first, then fit, then connect
+    manager.open().then(() => {
+      setTimeout(() => {
+        handleResize()
+        manager?.connect(sessionId)
+      }, 50)
+    })
+
     window.addEventListener('resize', handleResize)
   })
   
@@ -75,7 +80,7 @@
     {/if}
   </div>
   
-  <MobileKeybar write={(k) => manager?.onData(k)} />
+  <MobileKeybar write={(k: string) => { manager?.onData(k) }} />
 </div>
 
 <style>
@@ -162,6 +167,7 @@
   
   :global(.xterm-viewport) {
     background-color: transparent !important;
+    overflow-x: hidden !important;
   }
   
   .overlay {

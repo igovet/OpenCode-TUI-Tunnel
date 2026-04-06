@@ -50,6 +50,7 @@
     gap: var(--space-3);
     transition: all var(--transition-fast);
     box-shadow: inset 0 0 10px rgba(0,0,0,0.2);
+    overflow: hidden;
   }
   
   .terminal-card:hover {
@@ -66,9 +67,12 @@
   
   .title-row {
     display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
     align-items: center;
     justify-content: space-between;
     gap: var(--space-2);
+    min-width: 0;
   }
   
   .session-title {
@@ -78,7 +82,23 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    min-width: 0;
     font-weight: 600;
+    flex: 1;
+  }
+
+  .title-row :global(.badge-container) {
+    max-width: 100%;
+    min-width: 0;
+  }
+
+  .title-row :global(.badge-text) {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    flex: 1;
   }
   
   .meta {
@@ -104,5 +124,7 @@
     font-size: var(--font-size-xs);
     padding: var(--space-1) var(--space-3);
     letter-spacing: 1px;
+    flex-shrink: 0;
+    white-space: nowrap;
   }
 </style>

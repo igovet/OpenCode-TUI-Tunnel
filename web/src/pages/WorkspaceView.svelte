@@ -1,15 +1,12 @@
 <script lang="ts">
-  import { workspace } from '../lib/workspace';
   import TerminalGrid from '../components/TerminalGrid.svelte';
   import MobileKeybar from '../components/MobileKeybar.svelte';
-  import { activeTerminalWrite, activeTerminalRef } from '../lib/activeTerminal';
+  import { activeTerminalRef } from '../lib/activeTerminal';
   import { get } from 'svelte/store';
   
   let { headerHeight = 40 } = $props<{ headerHeight?: number }>();
 
   // Reactive active tab
-  let activeTab = $derived($workspace.tabs.find(t => t.sessionId === $workspace.activeTabId));
-  
   // Hide keybar on desktop (viewport >= 900px or when pointer: fine / non-coarse pointer)
   let isMobile = $state(true);
   
@@ -45,7 +42,7 @@
   });
 </script>
 
-<div class="workspace" style="height: {isMobile ? (vpHeight > 0 ? (vpHeight - headerHeight) + 'px' : '100%') : '100%'}; box-sizing: border-box; overflow: hidden; padding-bottom: {isMobile ? '44px' : '0'};">
+<div class="workspace" style="height: {isMobile ? (vpHeight > 0 ? (vpHeight - headerHeight) + 'px' : '100%') : '100%'}; width: 100%; box-sizing: border-box; overflow: hidden; padding-bottom: {isMobile ? '44px' : '0'};">
   <div class="workspace-terminals">
     <TerminalGrid />
   </div>
@@ -59,11 +56,16 @@
     display: flex;
     flex-direction: column;
     height: 100%;
+    width: 100%;
     overflow: hidden;
   }
   .workspace-terminals {
+    display: flex;
+    flex-direction: column;
     flex: 1;
+    width: 100%;
     min-height: 0;
+    min-width: 0;
     overflow: hidden;
   }
 </style>

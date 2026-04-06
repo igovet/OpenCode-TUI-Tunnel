@@ -10,7 +10,6 @@
   let sessions = $state<SessionInfo[]>([]);
   let history = $state<import('../lib/types').ProjectHistoryRecord[]>([]);
   let tmuxSessions = $state<import('../lib/types').TmuxDiscoverySession[]>([]);
-  let loading = $state(true);
   let interval: number;
 
   let launchCwd = $state('');
@@ -39,7 +38,7 @@
     } catch (e) {
       console.error(e);
     } finally {
-      loading = false;
+      // intentional
     }
   }
 
@@ -52,10 +51,22 @@
     if (interval) clearInterval(interval);
   });
 
+  function getSavedTermDims(): { cols: number; rows: number } {
+    try {
+      const cols = parseInt(localStorage.getItem('termLastCols') ?? '');
+      const rows = parseInt(localStorage.getItem('termLastRows') ?? '');
+      if (cols > 20 && rows > 5) return { cols, rows };
+    } catch {
+      // intentional
+    }
+    return { cols: 220, rows: 50 }; // large default — better too big than too small for TUI
+  }
+
   async function handleLaunch() {
     if (!launchCwd) return;
     try {
-      const { session } = await launchSession(launchCwd, 80, 24);
+      const { cols, rows } = getSavedTermDims();
+      const { session } = await launchSession(launchCwd, cols, rows);
       openSessionTab(session);
     } catch (e: unknown) {
       const err = e as Error & { statusCode?: number };
@@ -69,7 +80,8 @@
 
   async function handleAttach(name: string) {
     try {
-      const res = await attachTmuxSession(name, 80, 24);
+      const { cols, rows } = getSavedTermDims();
+      const res = await attachTmuxSession(name, cols, rows);
       if (res) {
         // Find it in the newly listed sessions
         await load();
@@ -125,7 +137,7 @@
           <h2 class="panel-title">&gt; ACTIVE_SESSIONS</h2>
           <div class="panel-content grid-cards">
             {#each sessions as session (session.id)}
-              <SessionCard {session} onConnect={(id) => openSessionTab(session)} />
+              <SessionCard {session} onConnect={() => openSessionTab(session)} />
             {/each}
           </div>
         </section>
@@ -183,6 +195,8 @@
     width: 100%;
     padding: var(--space-4) var(--space-6);
     font-family: var(--font-mono);
+    box-sizing: border-box;
+    overflow-x: hidden;
   }
   
   .dash-header {
@@ -207,9 +221,13 @@
     align-items: start;
   }
 
+  .dash-col {
+    min-width: 0;
+  }
+
   @media (max-width: 900px) {
     .dash-grid {
-      grid-template-columns: 1fr;
+      grid-template-columns: minmax(0, 1fr);
     }
   }
 
@@ -256,6 +274,8 @@
     display: flex;
     gap: var(--space-3);
     align-items: center;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .launch-btn {
@@ -265,7 +285,7 @@
 
   .grid-cards {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
     gap: var(--space-4);
   }
 
@@ -279,11 +299,13 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
+    gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
     background: var(--bg-base);
     border: 1px solid var(--border-muted);
     border-radius: var(--radius-sm);
     transition: border-color var(--transition-fast);
+    min-width: 0;
   }
   
   .list-item:hover {
@@ -294,10 +316,12 @@
   .path-text {
     font-size: var(--font-size-sm);
     color: var(--text-primary);
+    flex: 1;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 70%;
+    max-width: 100%;
   }
 
   .tmux-name {
@@ -353,6 +377,7 @@
     padding: var(--space-6);
     max-width: 480px;
     width: 100%;
+    box-sizing: border-box;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
     display: flex;
     flex-direction: column;

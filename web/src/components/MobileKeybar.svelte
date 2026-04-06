@@ -5,6 +5,7 @@
   let bottomOffset = $state(0);
   let isMobile = $state(false);
   let ctrlActive = $state(false);
+  let keyboardOpen = $state(false);
 
   function openCtrlInput() {
     ctrlActive = true;
@@ -43,14 +44,11 @@
         'u': '\x15', 'U': '\x15',
       };
       
-      let seq = '';
-      if (charMap[char]) {
-        seq = charMap[char];
-      } else if (/^[a-zA-Z]$/.test(char)) {
-        seq = String.fromCharCode(char.toUpperCase().charCodeAt(0) - 64);
-      } else {
-        seq = '\x1b' + char;
-      }
+      const seq =
+        charMap[char] ??
+        (/^[a-zA-Z]$/.test(char)
+          ? String.fromCharCode(char.toUpperCase().charCodeAt(0) - 64)
+          : '\x1b' + char);
       
       sendKey(seq);
       cleanup();
@@ -90,6 +88,7 @@
       if (window.visualViewport) {
         const keyboardHeight = window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
         bottomOffset = Math.max(0, keyboardHeight);
+        keyboardOpen = (window.innerHeight - window.visualViewport.height) > 100;
       }
     };
     window.visualViewport.addEventListener('resize', vvHandler);
@@ -107,7 +106,6 @@
     navigator.vibrate?.(8);
     const term = get(activeTerminalRef);
     if (term) {
-      // @ts-ignore - as requested by instructions
       term.terminal.input(seq, true);
     }
   }
@@ -119,7 +117,6 @@
       const term = get(activeTerminalRef);
       if (term && text) {
         for (let i = 0; i < text.length; i++) {
-          // @ts-ignore
           term.terminal.input(text[i], true);
         }
       }
@@ -220,6 +217,13 @@
       }
     };
   })();
+
+  const keyboardTap = makeTapHandler(() => {
+    const term = get(activeTerminalRef);
+    if (term) {
+      term.toggleMobileKeyboard();
+    }
+  });
 </script>
 
 {#if isMobile}
@@ -229,8 +233,17 @@
     onpointerdown={(e) => e.preventDefault()}
   >
     <button
+      class="key key-keyboard {keyboardOpen ? 'kb-active' : ''}"
+      tabindex="-1"
+      onmousedown={(e) => e.preventDefault()}
+      ontouchstart={keyboardTap.touchstart}
+      ontouchmove={keyboardTap.touchmove}
+      ontouchend={keyboardTap.touchend}
+    >⌨</button>
+    <button
       class="key {ctrlActive ? 'ctrl-active' : ''}"
       tabindex="-1"
+      onmousedown={(e) => e.preventDefault()}
       ontouchstart={ctrlTap.touchstart}
       ontouchmove={ctrlTap.touchmove}
       ontouchend={ctrlTap.touchend}
@@ -239,6 +252,7 @@
       <button
         class="key {key.cls ?? ''}"
         tabindex="-1"
+        onmousedown={(e) => e.preventDefault()}
         ontouchstart={key.tap.touchstart}
         ontouchmove={key.tap.touchmove}
         ontouchend={key.tap.touchend}
@@ -247,6 +261,7 @@
     <button
       class="key"
       tabindex="-1"
+      onmousedown={(e) => e.preventDefault()}
       ontouchstart={pasteTap.touchstart}
       ontouchmove={pasteTap.touchmove}
       ontouchend={pasteTap.touchend}
@@ -305,5 +320,22 @@
     background: #4a2200;
     border-color: #aa6600;
     color: #ffaa44;
+  }
+  .key.key-keyboard {
+    background: #0d2a3a;
+    border-color: #1a6080;
+    color: #4db8e8;
+    padding: 4px 14px;
+    margin-right: 6px;
+    font-size: 14px;
+    border-width: 1px;
+  }
+  .key.kb-active {
+    background: #003a4a;
+    border-color: #0099bb;
+    color: #44ddff;
+    padding: 4px 14px;
+    margin-right: 6px;
+    font-size: 14px;
   }
 </style>

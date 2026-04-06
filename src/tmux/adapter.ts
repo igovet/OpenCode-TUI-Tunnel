@@ -1,9 +1,14 @@
 import { execFile } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { spawn, type IPty } from 'node-pty';
 
 const execFileAsync = promisify(execFile);
+
+const moduleDir = dirname(fileURLToPath(import.meta.url));
 
 const TMUX_FALLBACK_PATH_SEGMENTS = [
   '/usr/local/sbin',
@@ -34,6 +39,25 @@ async function execTmux(args: string[]): Promise<{ stdout: string; stderr: strin
   return execFileAsync('tmux', args, { env: getTmuxExecEnv() });
 }
 
+function resolveOpencodeTuiConfigPath(): string | null {
+  const bundledPath = fileURLToPath(new URL('../assets/opencode-tui-config.json', import.meta.url));
+  if (existsSync(bundledPath)) {
+    return bundledPath;
+  }
+
+  const projectAssetPath = resolve(moduleDir, '../../assets/opencode-tui-config.json');
+  if (existsSync(projectAssetPath)) {
+    return projectAssetPath;
+  }
+
+  const sourcePath = resolve(moduleDir, '../../src/assets/opencode-tui-config.json');
+  if (existsSync(sourcePath)) {
+    return sourcePath;
+  }
+
+  return null;
+}
+
 export interface TmuxSession {
   name: string;
   created: string;
@@ -54,6 +78,8 @@ export interface TmuxPtyHandle {
   onData(cb: (data: Buffer) => void): void;
   write(data: string): void;
   resize(cols: number, rows: number): void;
+  pause(): void;
+  resume(): void;
   close(): void;
 }
 
@@ -76,6 +102,14 @@ class TmuxPtyHandleImpl implements TmuxPtyHandle {
 
   public resize(cols: number, rows: number): void {
     this.pty.resize(cols, rows);
+  }
+
+  public pause(): void {
+    this.pty.pause();
+  }
+
+  public resume(): void {
+    this.pty.resume();
   }
 
   public close(): void {
@@ -171,7 +205,14 @@ export async function listAllTmuxSessions(): Promise<TmuxSessionInfo[]> {
 }
 
 export async function createSession(name: string, cwd: string): Promise<void> {
-  await execTmux(['new-session', '-d', '-s', name, '-c', cwd]);
+  const tmuxArgs = ['new-session', '-d', '-s', name, '-c', cwd];
+  const opencodeTuiConfigPath = resolveOpencodeTuiConfigPath();
+  if (opencodeTuiConfigPath) {
+    tmuxArgs.push('-e', `OPENCODE_TUI_CONFIG=${opencodeTuiConfigPath}`);
+  }
+
+  await execTmux(tmuxArgs);
+  await execTmux(['set-option', '-t', name, 'status', 'off']);
 }
 
 export async function sendCommand(sessionName: string, command: string): Promise<void> {
@@ -197,7 +238,13 @@ export function attachPty(sessionName: string, cols: number, rows: number): Tmux
     rows,
     name: 'xterm-256color',
     cwd: process.cwd(),
-    env: getTmuxExecEnv(),
+    env: {
+      ...getTmuxExecEnv(),
+      TERM: 'xterm-256color',
+      COLORTERM: 'truecolor',
+      LANG: 'en_US.UTF-8',
+      LC_ALL: 'en_US.UTF-8',
+    },
   });
 
   return new TmuxPtyHandleImpl(pty);

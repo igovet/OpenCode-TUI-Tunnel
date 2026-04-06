@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -33,8 +34,10 @@ export interface ServerStartInfo {
 }
 
 interface StreamSocket {
-  send(data: string | Buffer): void;
+  send(data: string | Buffer, cb?: (error?: Error) => void): void;
   close(code?: number, reason?: string): void;
+  readonly bufferedAmount?: number;
+  readonly readyState?: number;
   on(event: 'message', listener: (raw: unknown) => void): void;
   on(event: 'close' | 'error', listener: () => void): void;
 }
@@ -50,6 +53,10 @@ let stopInProgress: Promise<void> | null = null;
 
 const WS_DEFAULT_COLS = 120;
 const WS_DEFAULT_ROWS = 30;
+const WS_BACKPRESSURE_HIGH_WATERMARK_BYTES = 256 * 1024;
+const WS_BACKPRESSURE_LOW_WATERMARK_BYTES = 64 * 1024;
+const WS_BACKPRESSURE_POLL_INTERVAL_MS = 8;
+const WS_READY_STATE_OPEN = 1;
 
 function expandHomePath(inputPath: string): string {
   if (inputPath === '~') {
@@ -352,13 +359,62 @@ function setupRoutes(
 
       let handle: TmuxPtyHandle | null = null;
       let handleClosed = false;
+      let ptyPausedForBackpressure = false;
+      let backpressureTimer: NodeJS.Timeout | null = null;
+      const decoder = new StringDecoder('utf8');
+
+      const clearBackpressureTimer = (): void => {
+        if (!backpressureTimer) {
+          return;
+        }
+
+        clearTimeout(backpressureTimer);
+        backpressureTimer = null;
+      };
+
+      const scheduleBackpressureResumeCheck = (): void => {
+        if (!ptyPausedForBackpressure || backpressureTimer) {
+          return;
+        }
+
+        backpressureTimer = setTimeout(() => {
+          backpressureTimer = null;
+
+          if (!handle || handleClosed || !ptyPausedForBackpressure) {
+            return;
+          }
+
+          const bufferedAmount = typeof ws.bufferedAmount === 'number' ? ws.bufferedAmount : 0;
+          if (bufferedAmount > WS_BACKPRESSURE_LOW_WATERMARK_BYTES) {
+            scheduleBackpressureResumeCheck();
+            return;
+          }
+
+          handle.resume();
+          ptyPausedForBackpressure = false;
+        }, WS_BACKPRESSURE_POLL_INTERVAL_MS);
+      };
+
+      const pausePtyForBackpressure = (): void => {
+        if (!handle || handleClosed || ptyPausedForBackpressure) {
+          return;
+        }
+
+        handle.pause();
+        ptyPausedForBackpressure = true;
+        scheduleBackpressureResumeCheck();
+      };
 
       const closeHandle = () => {
+        clearBackpressureTimer();
+        decoder.end();
+
         if (!handle || handleClosed) {
           return;
         }
 
         handleClosed = true;
+        ptyPausedForBackpressure = false;
         handle.close();
         handle = null;
       };
@@ -406,7 +462,39 @@ function setupRoutes(
 
       handle.onData((data) => {
         try {
-          ws.send(data);
+          const raw = Buffer.isBuffer(data) ? data : Buffer.from(data as string, 'utf8');
+
+          // Strip OpenTUI any-event mouse tracking toggles to prevent xterm.js hover redraw flicker.
+          const output = decoder
+            .write(raw)
+            .replaceAll('\x1b[?1003h', '')
+            .replaceAll('\x1b[?1003l', '');
+
+          if (typeof ws.readyState === 'number' && ws.readyState !== WS_READY_STATE_OPEN) {
+            closeHandle();
+            return;
+          }
+
+          if (ptyPausedForBackpressure) {
+            // Backpressure mode intentionally drops stale PTY frames until the socket drains.
+            return;
+          }
+
+          ws.send(output, (error?: Error) => {
+            if (error) {
+              closeHandle();
+              return;
+            }
+
+            if (ptyPausedForBackpressure) {
+              scheduleBackpressureResumeCheck();
+            }
+          });
+
+          const bufferedAmount = typeof ws.bufferedAmount === 'number' ? ws.bufferedAmount : 0;
+          if (bufferedAmount > WS_BACKPRESSURE_HIGH_WATERMARK_BYTES) {
+            pausePtyForBackpressure();
+          }
         } catch {
           closeHandle();
         }

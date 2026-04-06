@@ -37,7 +37,9 @@ async function runLaunchctl(args: string[]): Promise<ExecResult> {
   } catch (error) {
     if (isExecFileError(error)) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        throw new Error('launchctl not found; LaunchAgents are unavailable on this system.');
+        throw new Error('launchctl not found; LaunchAgents are unavailable on this system.', {
+          cause: error,
+        });
       }
 
       return {

@@ -408,7 +408,7 @@ program
     });
 
     const configDir = getConfigDir();
-    let configWritable = false;
+    let configWritable: boolean;
     try {
       ensureConfigDir();
       await access(configDir, constants.W_OK);

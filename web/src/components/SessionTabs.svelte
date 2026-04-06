@@ -1,11 +1,19 @@
 <script lang="ts">
   import { workspace } from '../lib/workspace';
+  import { get } from 'svelte/store';
+  import { requestedWorkspacePage } from '../lib/workspacePage';
   
   let { ongoHome, ongoWorkspace }: { ongoHome: () => void, ongoWorkspace: () => void } = $props();
   
   function activate(sessionId: string) {
     workspace.activateTab(sessionId);
     ongoWorkspace();
+
+    const ws = get(workspace);
+    const tabIndex = ws.tabs.findIndex(t => t.sessionId === sessionId);
+    if (tabIndex >= 0) {
+      requestedWorkspacePage.set(tabIndex);
+    }
   }
   
   function close(e: Event, sessionId: string) {
