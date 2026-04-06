@@ -75,7 +75,9 @@
             await new Promise((resolve) => setTimeout(resolve, 100));
             manager.fitAddon.fit();
             console.log('[TerminalPane] fit() done, cols:', manager.terminal.cols, 'rows:', manager.terminal.rows);
-          } catch (_) {}
+          } catch {
+            // intentional
+          }
 
           initialRo.disconnect();
           setupResizeObserver(container);

@@ -1,4 +1,4 @@
-export let deferredPrompt: any = null;
+export let deferredPrompt: Event | null = null;
 
 export function registerServiceWorker() {
   if (typeof window !== 'undefined') {

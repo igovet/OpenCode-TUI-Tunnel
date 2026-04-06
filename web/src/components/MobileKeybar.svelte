@@ -43,14 +43,11 @@
         'u': '\x15', 'U': '\x15',
       };
       
-      let seq = '';
-      if (charMap[char]) {
-        seq = charMap[char];
-      } else if (/^[a-zA-Z]$/.test(char)) {
-        seq = String.fromCharCode(char.toUpperCase().charCodeAt(0) - 64);
-      } else {
-        seq = '\x1b' + char;
-      }
+      const seq =
+        charMap[char] ??
+        (/^[a-zA-Z]$/.test(char)
+          ? String.fromCharCode(char.toUpperCase().charCodeAt(0) - 64)
+          : '\x1b' + char);
       
       sendKey(seq);
       cleanup();
@@ -107,7 +104,6 @@
     navigator.vibrate?.(8);
     const term = get(activeTerminalRef);
     if (term) {
-      // @ts-ignore - as requested by instructions
       term.terminal.input(seq, true);
     }
   }
@@ -119,7 +115,6 @@
       const term = get(activeTerminalRef);
       if (term && text) {
         for (let i = 0; i < text.length; i++) {
-          // @ts-ignore
           term.terminal.input(text[i], true);
         }
       }

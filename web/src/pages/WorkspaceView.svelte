@@ -1,15 +1,12 @@
 <script lang="ts">
-  import { workspace } from '../lib/workspace';
   import TerminalGrid from '../components/TerminalGrid.svelte';
   import MobileKeybar from '../components/MobileKeybar.svelte';
-  import { activeTerminalWrite, activeTerminalRef } from '../lib/activeTerminal';
+  import { activeTerminalRef } from '../lib/activeTerminal';
   import { get } from 'svelte/store';
   
   let { headerHeight = 40 } = $props<{ headerHeight?: number }>();
 
   // Reactive active tab
-  let activeTab = $derived($workspace.tabs.find(t => t.sessionId === $workspace.activeTabId));
-  
   // Hide keybar on desktop (viewport >= 900px or when pointer: fine / non-coarse pointer)
   let isMobile = $state(true);
   

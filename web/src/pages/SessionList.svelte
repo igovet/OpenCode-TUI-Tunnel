@@ -10,7 +10,6 @@
   let sessions = $state<SessionInfo[]>([]);
   let history = $state<import('../lib/types').ProjectHistoryRecord[]>([]);
   let tmuxSessions = $state<import('../lib/types').TmuxDiscoverySession[]>([]);
-  let loading = $state(true);
   let interval: number;
 
   let launchCwd = $state('');
@@ -39,7 +38,7 @@
     } catch (e) {
       console.error(e);
     } finally {
-      loading = false;
+      // intentional
     }
   }
 
@@ -57,7 +56,9 @@
       const cols = parseInt(localStorage.getItem('termLastCols') ?? '');
       const rows = parseInt(localStorage.getItem('termLastRows') ?? '');
       if (cols > 20 && rows > 5) return { cols, rows };
-    } catch {}
+    } catch {
+      // intentional
+    }
     return { cols: 220, rows: 50 }; // large default — better too big than too small for TUI
   }
 
@@ -136,7 +137,7 @@
           <h2 class="panel-title">&gt; ACTIVE_SESSIONS</h2>
           <div class="panel-content grid-cards">
             {#each sessions as session (session.id)}
-              <SessionCard {session} onConnect={(id) => openSessionTab(session)} />
+              <SessionCard {session} onConnect={() => openSessionTab(session)} />
             {/each}
           </div>
         </section>

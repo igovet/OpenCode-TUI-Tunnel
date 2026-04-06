@@ -13,8 +13,6 @@
     containerWidth > 1600 ? 3 : 2
   );
 
-  let paneCount = $derived(Math.min(maxPanes, Math.max(1, tabs.length)));
-
   let workspacePage = $state(0);
   
   let totalPages = $derived(Math.ceil(tabs.length / maxPanes) || 1);
@@ -65,7 +63,7 @@
 <div class="terminal-grid-container">
   {#if totalPages > 1 && containerWidth >= 900}
     <div class="workspace-strip">
-      {#each Array(totalPages) as _, i}
+      {#each [...Array(totalPages).keys()] as i}
         <button 
           class="workspace-slot" 
           class:active={i === workspacePage}

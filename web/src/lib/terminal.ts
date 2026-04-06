@@ -62,7 +62,9 @@ export class TerminalManager {
       try {
         localStorage.setItem('termLastCols', String(size.cols));
         localStorage.setItem('termLastRows', String(size.rows));
-      } catch {}
+      } catch {
+        // intentional
+      }
 
       // Deduplicate: don't send if dims unchanged
       if (size.cols === this.lastSentCols && size.rows === this.lastSentRows) return;
@@ -147,7 +149,7 @@ export class TerminalManager {
       }
     };
 
-    const onTouchEnd = (e: TouchEvent) => {
+    const onTouchEnd = () => {
       // noop or reset if needed
     };
 
@@ -161,7 +163,7 @@ export class TerminalManager {
     this.touchElement = element;
     this.touchStartListener = onTouchStart as EventListener;
     this.touchMoveListener = onTouchMove as EventListener;
-    (this as any).touchEndListener = onTouchEnd as EventListener;
+    (this as { touchEndListener?: EventListener }).touchEndListener = onTouchEnd as EventListener;
   }
 
   connect(sessionId: string): void {
@@ -287,7 +289,9 @@ export class TerminalManager {
       try {
         localStorage.setItem('termLastCols', String(this.terminal.cols));
         localStorage.setItem('termLastRows', String(this.terminal.rows));
-      } catch {}
+      } catch {
+        // intentional
+      }
     } catch (e) {
       console.warn('FitAddon error:', e);
     }
@@ -375,10 +379,14 @@ export class TerminalManager {
     if (this.touchElement && this.touchMoveListener) {
       this.touchElement.removeEventListener('touchmove', this.touchMoveListener, { capture: true });
     }
-    if (this.touchElement && (this as any).touchEndListener) {
-      this.touchElement.removeEventListener('touchend', (this as any).touchEndListener, {
-        capture: true,
-      });
+    if (this.touchElement && (this as { touchEndListener?: EventListener }).touchEndListener) {
+      this.touchElement.removeEventListener(
+        'touchend',
+        (this as { touchEndListener?: EventListener }).touchEndListener as EventListener,
+        {
+          capture: true,
+        },
+      );
     }
     this.touchElement = null;
     this.touchStartListener = null;

@@ -43,6 +43,7 @@ async function runSystemctlUser(args: string[]): Promise<ExecResult> {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         throw new Error(
           'systemctl not found; systemd user services are unavailable on this system.',
+          { cause: error },
         );
       }
 

@@ -12,7 +12,9 @@
       const cols = parseInt(localStorage.getItem('termLastCols') ?? '');
       const rows = parseInt(localStorage.getItem('termLastRows') ?? '');
       if (cols > 20 && rows > 5) return { cols, rows };
-    } catch {}
+    } catch {
+      // intentional
+    }
     return { cols: 220, rows: 50 }; // large default — better too big than too small for TUI
   }
   
@@ -28,8 +30,8 @@
       const { cols, rows } = getSavedTermDims();
       const { session } = await launchSession(cwd, cols, rows)
       onSuccess(session.id)
-    } catch (e: any) {
-      error = e.message
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : String(e)
     } finally {
       loading = false
     }

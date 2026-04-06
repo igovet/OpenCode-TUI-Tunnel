@@ -22,22 +22,22 @@ function loadFromStorage(): { tabs: WorkspaceTab[]; activeTabId: string | null }
         return { tabs: parsed.tabs, activeTabId: parsed.activeTabId || null };
       }
     }
-  } catch {}
+  } catch {
+    // intentional
+  }
   return { tabs: [], activeTabId: null };
 }
 
 function saveToStorage(state: { tabs: WorkspaceTab[]; activeTabId: string | null }) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-  } catch {}
+  } catch {
+    // intentional
+  }
 }
 
 function createWorkspaceStore() {
-  const {
-    subscribe,
-    update: _update,
-    set,
-  } = writable<{
+  const { subscribe, update: _update } = writable<{
     tabs: WorkspaceTab[];
     activeTabId: string | null;
   }>(loadFromStorage());

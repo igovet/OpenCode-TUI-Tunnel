@@ -28,7 +28,7 @@
         suggestions = await suggestPaths(val);
         showSuggestions = suggestions.length > 0;
         activeIndex = -1;
-      } catch (err) {
+      } catch {
         suggestions = [];
         showSuggestions = false;
       }
