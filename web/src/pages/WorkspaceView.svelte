@@ -45,7 +45,7 @@
   });
 </script>
 
-<div class="workspace" style="height: {isMobile ? (vpHeight > 0 ? (vpHeight - headerHeight) + 'px' : '100%') : '100%'}; box-sizing: border-box; overflow: hidden; padding-bottom: {isMobile ? '44px' : '0'};">
+<div class="workspace" style="height: {isMobile ? (vpHeight > 0 ? (vpHeight - headerHeight) + 'px' : '100%') : '100%'}; width: 100%; box-sizing: border-box; overflow: hidden; padding-bottom: {isMobile ? '44px' : '0'};">
   <div class="workspace-terminals">
     <TerminalGrid />
   </div>
@@ -59,11 +59,16 @@
     display: flex;
     flex-direction: column;
     height: 100%;
+    width: 100%;
     overflow: hidden;
   }
   .workspace-terminals {
+    display: flex;
+    flex-direction: column;
     flex: 1;
+    width: 100%;
     min-height: 0;
+    min-width: 0;
     overflow: hidden;
   }
 </style>

@@ -7,6 +7,15 @@
   let loading = $state(false)
   let error = $state('')
   
+  function getSavedTermDims(): { cols: number; rows: number } {
+    try {
+      const cols = parseInt(localStorage.getItem('termLastCols') ?? '');
+      const rows = parseInt(localStorage.getItem('termLastRows') ?? '');
+      if (cols > 20 && rows > 5) return { cols, rows };
+    } catch {}
+    return { cols: 220, rows: 50 }; // large default — better too big than too small for TUI
+  }
+  
   async function submit() {
     if (!cwd.trim()) {
       error = 'Working directory is required'
@@ -16,9 +25,10 @@
     loading = true
     error = ''
     try {
-      const { session } = await launchSession(cwd, 80, 24)
+      const { cols, rows } = getSavedTermDims();
+      const { session } = await launchSession(cwd, cols, rows)
       onSuccess(session.id)
-    } catch (e) {
+    } catch (e: any) {
       error = e.message
     } finally {
       loading = false

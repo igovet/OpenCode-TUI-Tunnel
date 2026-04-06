@@ -1,6 +1,5 @@
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
-import { CanvasAddon } from '@xterm/addon-canvas';
 import '@xterm/xterm/css/xterm.css';
 
 export class TerminalManager {
@@ -18,6 +17,8 @@ export class TerminalManager {
   private touchMoveListener: ((e: TouchEvent) => void) | null = null;
   private exited = false;
   private streamReady = false;
+  private lastSentCols = 0;
+  private lastSentRows = 0;
 
   constructor(element: HTMLElement, cols: number, rows: number) {
     this.element = element;
@@ -34,7 +35,7 @@ export class TerminalManager {
       fontWeight: 'normal',
       fontWeightBold: 'bold',
       drawBoldTextInBrightColors: false,
-      overviewRulerWidth: 0,
+      overviewRuler: { width: 0 },
       theme: {
         background: '#0d1117',
         foreground: '#e6edf3',
@@ -49,21 +50,37 @@ export class TerminalManager {
 
     this.terminal.onData((data) => this.onData(data));
     this.terminal.onResize((size) => {
+      // Save dimensions for next session launch
+      try {
+        localStorage.setItem('termLastCols', String(size.cols));
+        localStorage.setItem('termLastRows', String(size.rows));
+      } catch {}
+
+      // Deduplicate: don't send if dims unchanged
+      if (size.cols === this.lastSentCols && size.rows === this.lastSentRows) return;
+      this.lastSentCols = size.cols;
+      this.lastSentRows = size.rows;
+
       if (this.ws?.readyState === WebSocket.OPEN) {
         this.ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
       }
     });
   }
 
-  open(): void {
+  async open(): Promise<void> {
     this.terminal.open(this.element);
 
-    // Use Canvas renderer for pixel-perfect TUI rendering on HiDPI screens
+    // Try WebGL first — fallback is xterm's built-in DOM renderer
     try {
-      const canvasAddon = new CanvasAddon();
-      this.terminal.loadAddon(canvasAddon);
+      const { WebglAddon } = await import('@xterm/addon-webgl');
+      const webglAddon = new WebglAddon();
+      // If WebGL context is lost (e.g., GPU reset), xterm falls back to built-in DOM renderer.
+      webglAddon.onContextLoss(() => {
+        webglAddon.dispose();
+      });
+      this.terminal.loadAddon(webglAddon);
     } catch (e) {
-      console.warn('CanvasAddon unavailable, falling back to DOM renderer:', e);
+      console.warn('WebglAddon unavailable, using built-in DOM renderer:', e);
     }
 
     this.setupTouchScroll(this.element);
@@ -230,6 +247,10 @@ export class TerminalManager {
 
     try {
       this.fitAddon.fit();
+      try {
+        localStorage.setItem('termLastCols', String(this.terminal.cols));
+        localStorage.setItem('termLastRows', String(this.terminal.rows));
+      } catch {}
     } catch (e) {
       console.warn('FitAddon error:', e);
     }

@@ -37,7 +37,6 @@
       if (isActive && manager && containerReady) {
         manager.fitWhenReady();
         manager.terminal.focus();
-        manager.fitAddon?.fit();
         activeTerminalWrite.set((data) => manager!.onData(data)); activeTerminalRef.set(manager);
       }
     }
@@ -68,10 +67,12 @@
           console.log('[TerminalPane] tick done, calling open()...');
 
           if (!manager) return;
-          manager.open();
+          await manager.open();
           console.log('[TerminalPane] open() done');
 
           try {
+            // Brief delay to ensure xterm metrics/canvas settle before first fit.
+            await new Promise((resolve) => setTimeout(resolve, 100));
             manager.fitAddon.fit();
             console.log('[TerminalPane] fit() done, cols:', manager.terminal.cols, 'rows:', manager.terminal.rows);
           } catch (_) {}
@@ -218,16 +219,15 @@
     inset: 0;
     overflow: hidden;
     background: #0d1117;
-  }
-
-  :global(.terminal-pane .xterm) {
-    width: 100%;
-    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
   }
 
   :global(.terminal-pane .xterm-screen canvas) {
     image-rendering: auto;
     touch-action: pan-y;
+    transform: none !important;
   }
 
   .terminal-pane.active {

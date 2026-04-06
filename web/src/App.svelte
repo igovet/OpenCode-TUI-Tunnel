@@ -108,6 +108,8 @@
     display: flex;
     flex-direction: column;
     height: 100%;
+    width: 100%;
+    box-sizing: border-box;
     background: var(--bg-base);
     color: var(--text-primary);
     font-family: var(--font-mono);

@@ -103,6 +103,7 @@
     display: flex;
     flex-direction: column;
     min-height: 0;
+    min-width: 0;
     background: var(--bg-primary, #0d1117);
   }
 
@@ -174,13 +175,14 @@
     width: 100%;
     flex: 1;
     min-height: 0;
+    min-width: 0;
     gap: 0;
     overflow: hidden;
   }
 
   .pane-wrapper {
     flex: 1;
-    min-width: min(100%, 400px);
+    min-width: 0;
     min-height: 0;
     height: 100%;
     width: 100%;

@@ -1,0 +1,4 @@
+{
+  "$schema": "https://opencode.ai/config/tui.json",
+  "plugin": ["./opencode-tui-30fps.js"]
+}

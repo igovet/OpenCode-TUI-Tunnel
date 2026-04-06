@@ -54,6 +54,14 @@ class CountingPtyHandle implements TmuxPtyHandle {
     this.inner.resize(cols, rows);
   }
 
+  public pause(): void {
+    this.inner.pause();
+  }
+
+  public resume(): void {
+    this.inner.resume();
+  }
+
   public close(): void {
     if (this.closed) {
       return;
