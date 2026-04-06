@@ -1,6 +1,7 @@
 <script lang="ts">
   import TerminalPane from './TerminalPane.svelte';
   import { workspace } from '../lib/workspace';
+  import { requestedWorkspacePage } from '../lib/workspacePage';
 
   let containerWidth = $state(0);
   
@@ -21,6 +22,17 @@
   $effect(() => {
     if (workspacePage >= totalPages) {
       workspacePage = Math.max(0, totalPages - 1);
+    }
+  });
+
+  $effect(() => {
+    const tabIdx = $requestedWorkspacePage;
+    if (tabIdx !== null) {
+      const targetPage = Math.floor(tabIdx / maxPanes);
+      if (targetPage !== workspacePage && targetPage < totalPages) {
+        workspacePage = targetPage;
+      }
+      requestedWorkspacePage.set(null); // consume
     }
   });
 

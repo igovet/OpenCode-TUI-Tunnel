@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { get } from 'svelte/store';
+  import { requestedWorkspacePage } from './lib/workspacePage';
   import { workspace } from './lib/workspace';
   import { deleteSession } from './lib/api';
   import SessionList from './pages/SessionList.svelte';
@@ -96,7 +98,13 @@
   
   <main class="app-content" data-view={currentView}>
     {#if currentView === 'home' || $workspace.tabs.length === 0}
-      <SessionList onopenSession={(e) => workspace.openTab(e)} />
+      <SessionList onopenSession={(e) => {
+        workspace.openTab(e);
+        const tabIndex = get(workspace).tabs.findIndex(t => t.sessionId === e.sessionId);
+        if (tabIndex >= 0) {
+          requestedWorkspacePage.set(tabIndex);
+        }
+      }} />
     {:else}
       <WorkspaceView {headerHeight} />
     {/if}

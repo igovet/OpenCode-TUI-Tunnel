@@ -3,7 +3,7 @@
   import { TerminalManager } from '../lib/terminal';
   import { workspace, isTerminalTabEnded } from '../lib/workspace';
   import { activeTerminalWrite, activeTerminalRef } from '../lib/activeTerminal';
-  import { zoomState, setZoom, registerManager } from '../lib/zoomStore.svelte';
+  import { zoomState, setZoom, registerManager, terminalManagers } from '../lib/zoomStore.svelte';
 
   let { sessionId, isActive } = $props<{ sessionId: string, isActive: boolean }>();
 
@@ -13,14 +13,22 @@
   let unregisterManager: (() => void) | null = null;
   let containerReady = $state(false);
 
+
   let resizeTimer: ReturnType<typeof setTimeout> | null = null;
   let ongoingResizeObserver: ResizeObserver | null = null;
 
   let tab = $derived($workspace.tabs.find((t) => t.sessionId === sessionId));
   let tabEnded = $derived(tab ? isTerminalTabEnded(tab.status) : false);
 
+  let lastObservedW = 0;
+  let lastObservedH = 0;
+
   function setupResizeObserver(el: HTMLElement) {
-    ongoingResizeObserver = new ResizeObserver(() => {
+    ongoingResizeObserver = new ResizeObserver((entries) => {
+      const { width, height } = entries[0].contentRect;
+      if (width === lastObservedW && height === lastObservedH) return;
+      lastObservedW = width;
+      lastObservedH = height;
       if (resizeTimer) clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
         if (manager) {
@@ -36,14 +44,41 @@
       terminalActive = isActive;
       if (isActive && manager && containerReady) {
         manager.fitWhenReady();
-        manager.terminal.focus();
+        if (!window.matchMedia('(pointer: coarse)').matches) {
+          manager.terminal.focus();
+        }
         activeTerminalWrite.set((data) => manager!.onData(data)); activeTerminalRef.set(manager);
+        // Refresh ALL visible terminals when a pane becomes active
+        // (intra-window switch does not fire window blur/focus events)
+        requestAnimationFrame(() => {
+          for (const mgr of terminalManagers) {
+            // @ts-expect-error type
+            mgr._webglAddon?.clearTextureAtlas();
+            mgr.terminal.refresh(0, mgr.terminal.rows - 1);
+            const currentFontSize = mgr.terminal.options.fontSize ?? 14;
+            mgr.terminal.options.fontSize = currentFontSize;
+
+          }
+        });
+      } else if (!isActive && manager) {
+        // Also refresh when losing active status
+        requestAnimationFrame(() => {
+          for (const mgr of terminalManagers) {
+            // @ts-expect-error type
+            mgr._webglAddon?.clearTextureAtlas();
+            mgr.terminal.refresh(0, mgr.terminal.rows - 1);
+            const currentFontSize = mgr.terminal.options.fontSize ?? 14;
+            mgr.terminal.options.fontSize = currentFontSize;
+
+          }
+        });
       }
     }
   });
 
   onMount(() => {
     manager = new TerminalManager(container, 80, 24);
+
     unregisterManager = registerManager(manager);
     // NOTE: connect() is called AFTER open() — see initialRo below
     
@@ -91,7 +126,9 @@
           }
 
           if (isActive) {
-            manager.terminal.focus();
+            if (!window.matchMedia('(pointer: coarse)').matches) {
+              manager.terminal.focus();
+            }
             activeTerminalWrite.set((data) => manager!.onData(data));
             activeTerminalRef.set(manager);
           }
@@ -130,7 +167,11 @@
     if (!isActive) {
       workspace.activateTab(sessionId);
     }
-    manager?.terminal.focus();
+    // Only focus (and open virtual keyboard) on non-touch/desktop devices
+    const isTouch = window.matchMedia('(pointer: coarse)').matches;
+    if (!isTouch) {
+      manager?.terminal.focus();
+    }
   }
 </script>
 
@@ -151,6 +192,7 @@
       <button onclick={() => setZoom(zoomState.value + 1)}>+</button>
     </div>
   {/if}
+
   {#if !containerReady}
     <div class="terminal-placeholder"></div>
   {/if}
@@ -158,6 +200,7 @@
 </div>
 
 <style>
+
   .zoom-toolbar {
     position: absolute;
     top: 0;
@@ -224,6 +267,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    max-width: 100%;
   }
 
   :global(.terminal-pane .xterm-screen canvas) {
@@ -239,7 +283,7 @@
   :global(.terminal-pane .xterm-viewport) {
     width: 100% !important;
     background-color: #0d1117 !important;
-    overflow-y: hidden !important;
+    overflow-y: auto !important;
     overflow-x: hidden !important;
     scrollbar-width: none !important; /* Firefox */
     overscroll-behavior: contain;
@@ -265,8 +309,8 @@
   }
 
   :global(.terminal-pane .xterm-screen) {
-    display: flex;
-    justify-content: center;
+    width: 100%;
+    display: block;
     overflow: hidden !important;
   }
 </style>
