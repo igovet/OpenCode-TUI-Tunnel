@@ -1,11 +1,11 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
-  import { TerminalManager } from '../lib/terminal';
+  import { TerminalManager, refreshAllManagers } from '../lib/terminal';
   import { workspace, isTerminalTabEnded } from '../lib/workspace';
   import { activeTerminalWrite, activeTerminalRef } from '../lib/activeTerminal';
-  import { zoomState, setZoom, registerManager, terminalManagers } from '../lib/zoomStore.svelte';
+  import { zoomState, setZoom, registerManager } from '../lib/zoomStore.svelte';
 
-  let { sessionId, isActive } = $props<{ sessionId: string, isActive: boolean }>();
+  let { sessionId, isActive, showBorder = false } = $props<{ sessionId: string, isActive: boolean, showBorder?: boolean }>();
 
   let container: HTMLElement;
   let manager: TerminalManager | null = null;
@@ -50,28 +50,10 @@
         activeTerminalWrite.set((data) => manager!.onData(data)); activeTerminalRef.set(manager);
         // Refresh ALL visible terminals when a pane becomes active
         // (intra-window switch does not fire window blur/focus events)
-        requestAnimationFrame(() => {
-          for (const mgr of terminalManagers) {
-            // @ts-expect-error type
-            mgr._webglAddon?.clearTextureAtlas();
-            mgr.terminal.refresh(0, mgr.terminal.rows - 1);
-            const currentFontSize = mgr.terminal.options.fontSize ?? 14;
-            mgr.terminal.options.fontSize = currentFontSize;
-
-          }
-        });
+        refreshAllManagers();
       } else if (!isActive && manager) {
         // Also refresh when losing active status
-        requestAnimationFrame(() => {
-          for (const mgr of terminalManagers) {
-            // @ts-expect-error type
-            mgr._webglAddon?.clearTextureAtlas();
-            mgr.terminal.refresh(0, mgr.terminal.rows - 1);
-            const currentFontSize = mgr.terminal.options.fontSize ?? 14;
-            mgr.terminal.options.fontSize = currentFontSize;
-
-          }
-        });
+        refreshAllManagers();
       }
     }
   });
@@ -178,7 +160,7 @@
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_interactive_supports_focus -->
 <div
-  class="terminal-pane {isActive ? 'active' : ''}"
+  class="terminal-pane {isActive && showBorder ? 'active' : ''}"
   onclick={handleClick}
   ontouchstart={(e) => e.stopPropagation()}
   ontouchmove={(e) => e.stopPropagation()}

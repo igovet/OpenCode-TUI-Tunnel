@@ -2,9 +2,10 @@
   import { workspace } from '../lib/workspace';
   import { get } from 'svelte/store';
   import { requestedWorkspacePage } from '../lib/workspacePage';
-  
-  let { ongoHome, ongoWorkspace }: { ongoHome: () => void, ongoWorkspace: () => void } = $props();
-  
+  import { refreshAllManagers } from '../lib/terminal';
+
+  let { ongoHome, ongoWorkspace, currentView }: { ongoHome: () => void, ongoWorkspace: () => void, currentView: 'home' | 'workspace' } = $props();
+
   function activate(sessionId: string) {
     workspace.activateTab(sessionId);
     ongoWorkspace();
@@ -14,6 +15,9 @@
     if (tabIndex >= 0) {
       requestedWorkspacePage.set(tabIndex);
     }
+    
+    // Refresh terminals after tab switch to ensure correct rendering
+    refreshAllManagers();
   }
   
   function close(e: Event, sessionId: string) {
@@ -36,10 +40,10 @@
   {#each $workspace.tabs as tab (tab.sessionId)}
     <div 
       class="tab" 
-      class:active={tab.sessionId === $workspace.activeTabId}
+      class:active={tab.sessionId === $workspace.activeTabId && currentView === 'workspace'}
       role="tab"
       tabindex="0"
-      aria-selected={tab.sessionId === $workspace.activeTabId}
+      aria-selected={tab.sessionId === $workspace.activeTabId && currentView === 'workspace'}
       onclick={() => activate(tab.sessionId)}
       onkeydown={(e) => handleKeydown(e, tab.sessionId)}
     >

@@ -3,6 +3,17 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import '@xterm/xterm/css/xterm.css';
 
+export function refreshAllManagers() {
+  requestAnimationFrame(() => {
+    for (const manager of terminalManagers) {
+      manager._webglAddon?.clearTextureAtlas();
+      manager.terminal.refresh(0, manager.terminal.rows - 1);
+      const currentFontSize = manager.terminal.options.fontSize ?? 14;
+      manager.terminal.options.fontSize = currentFontSize;
+    }
+  });
+}
+
 export class TerminalManager {
   terminal: Terminal;
   fitAddon: FitAddon;
@@ -157,21 +168,6 @@ export class TerminalManager {
     } catch (e) {
       console.warn('WebglAddon unavailable, using built-in DOM renderer:', e);
     }
-
-    const refreshAllManagers = () => {
-      requestAnimationFrame(() => {
-        for (const manager of terminalManagers) {
-          // Clear WebGL texture atlas to force full GPU re-upload
-          manager._webglAddon?.clearTextureAtlas();
-          // Trigger xterm's full viewport refresh
-          manager.terminal.refresh(0, manager.terminal.rows - 1);
-          // Force xterm to re-evaluate character cell sizes and redraw
-          // This invalidates xterm's internal renderer state completely
-          const currentFontSize = manager.terminal.options.fontSize ?? 14;
-          manager.terminal.options.fontSize = currentFontSize;
-        }
-      });
-    };
 
     window.addEventListener('focus', (this._handleFocusRefresh = refreshAllManagers));
 
