@@ -99,6 +99,7 @@
         <TerminalPane 
           sessionId={pane.sessionId} 
           isActive={pane.sessionId === activeSessionId} 
+          showBorder={tabs.length > 1 && maxPanes > 1}
         />
       </div>
     {/each}

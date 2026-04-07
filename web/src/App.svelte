@@ -9,6 +9,15 @@
   
   // Navigation between home and workspace
   let currentView: 'home' | 'workspace' = $state('home');
+  let showWorkspaceLogo = $state(false);
+
+  $effect(() => {
+    if (currentView === 'workspace') {
+      showWorkspaceLogo = true;
+    } else {
+      showWorkspaceLogo = false;
+    }
+  });
   
   let confirmKill = $state(false);
   let killing = $state(false);
@@ -71,13 +80,20 @@
 
 <div class="app-shell">
   <header class="app-header" bind:clientHeight={headerHeight}>
-    <button class="app-logo" onclick={goHome} class:active={currentView === 'home'}>
-      <span class="logo-text">&gt;_</span>
-      <span class="logo-name">OCT</span>
+    <button class="app-logo" onclick={goHome} class:active={currentView === 'home'} class:workspace={showWorkspaceLogo}>
+      <span class="logo-text">
+        <span class="logo-arrow" class:workspace={showWorkspaceLogo}>&gt;</span>
+        <span class="logo-underscore" class:workspace={showWorkspaceLogo}>_</span>
+      </span>
+      <span class="logo-name" class:workspace={showWorkspaceLogo}>
+        {#each ['O', 'C', 'T'] as letter}
+          <span class="logo-letter" class:hidden={showWorkspaceLogo}>{letter}</span>
+        {/each}
+      </span>
     </button>
     
     {#if $workspace.tabs.length > 0}
-      <SessionTabs ongoHome={goHome} ongoWorkspace={goWorkspace} />
+      <SessionTabs ongoHome={goHome} ongoWorkspace={goWorkspace} {currentView} />
     {/if}
     
     <div class="header-actions">
@@ -149,11 +165,74 @@
     font-family: var(--font-mono);
     font-size: var(--font-size-sm);
     flex-shrink: 0;
-    transition: color var(--transition-fast);
+    width: auto;
+    transition: color var(--transition-fast), width 0.3s ease, gap 0.3s ease;
+  }
+  .app-logo.workspace {
+    gap: 0;
   }
   .app-logo:hover, .app-logo.active { color: var(--accent-green); }
-  .logo-text { color: var(--accent-green); font-weight: 700; }
-  .logo-name { color: var(--text-secondary); }
+  
+  .logo-text {
+    display: inline-flex;
+    align-items: baseline;
+    color: var(--accent-green);
+    font-weight: 700;
+  }
+  
+  .logo-arrow {
+    display: inline-block;
+    transition: transform 0.3s ease;
+  }
+  
+  .logo-arrow.workspace {
+    transform: rotate(-90deg);
+  }
+  
+  .logo-underscore {
+    display: inline-block;
+    transition: margin-left 0.3s ease, transform 0.3s ease;
+  }
+  
+  .logo-underscore.workspace {
+    margin-left: -7px;
+  }
+  
+  .logo-name {
+    display: inline-flex;
+    color: var(--text-secondary);
+    transition: max-width 0.3s ease, margin 0.3s ease, padding 0.3s ease;
+    max-width: 100px;
+    overflow: hidden;
+  }
+  
+  .logo-name.workspace {
+    max-width: 0;
+    margin: 0;
+    padding: 0;
+  }
+  
+  .logo-letter {
+    display: inline-block;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    max-width: 1em;
+    overflow: hidden;
+  }
+
+  /* Fade out (workspace) - right to left */
+  .logo-letter:nth-child(3) { transition-delay: 0ms; }   /* T */
+  .logo-letter:nth-child(2) { transition-delay: 100ms; } /* C */
+  .logo-letter:nth-child(1) { transition-delay: 200ms; } /* O */
+
+  /* Fade in (home) - left to right */
+  .logo-letter:not(.hidden):nth-child(1) { transition-delay: 0ms; }   /* O */
+  .logo-letter:not(.hidden):nth-child(2) { transition-delay: 100ms; } /* C */
+  .logo-letter:not(.hidden):nth-child(3) { transition-delay: 200ms; } /* T */
+
+  .logo-letter.hidden {
+    opacity: 0;
+    transform: scale(0.8);
+  }
   
   .header-actions {
     margin-left: auto;
