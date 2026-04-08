@@ -67,3 +67,63 @@ self.addEventListener('fetch', (event) => {
     }),
   );
 });
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+
+  const sessionId =
+    event.notification?.data && typeof event.notification.data.sessionId === 'string'
+      ? event.notification.data.sessionId
+      : null;
+
+  const activateUrl = sessionId ? `/?activateSession=${encodeURIComponent(sessionId)}` : '/';
+
+  event.waitUntil(
+    self.clients
+      .matchAll({ type: 'window', includeUncontrolled: true })
+      .then(async (clients) => {
+        const message = {
+          type: 'ACTIVATE_SESSION',
+          sessionId,
+        };
+
+        if (clients.length > 0) {
+          const visibleClient =
+            clients.find((client) => client.visibilityState === 'visible') ?? clients[0];
+
+          let targetClient = visibleClient;
+
+          if (
+            sessionId &&
+            targetClient.visibilityState !== 'visible' &&
+            typeof targetClient.navigate === 'function'
+          ) {
+            try {
+              targetClient = (await targetClient.navigate(activateUrl)) ?? targetClient;
+            } catch {
+              // fall back to focus/message or a new window below
+            }
+          }
+
+          try {
+            targetClient = (await targetClient.focus()) ?? targetClient;
+          } catch {
+            return self.clients.openWindow(activateUrl);
+          }
+
+          try {
+            targetClient.postMessage(message);
+          } catch {
+            // best-effort activation hint
+          }
+
+          return targetClient;
+        }
+
+        return self.clients.openWindow(activateUrl);
+      })
+      .catch(() => {
+        // Notification click handling is best-effort.
+      }),
+  );
+});

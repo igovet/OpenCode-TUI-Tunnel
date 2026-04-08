@@ -1,6 +1,12 @@
 import { defineConfig } from 'vite';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 
+import { loadConfig } from '../src/config/index.js';
+
+const config = loadConfig();
+const apiHost = process.env.OPENCODE_HOST ?? config.server.host;
+const apiPort = process.env.OPENCODE_PORT ?? String(config.server.port);
+
 export default defineConfig({
   root: 'web',
   plugins: [svelte()],
@@ -8,7 +14,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:4096',
+        target: `http://${apiHost}:${apiPort}`,
         changeOrigin: true,
         ws: true,
       },

@@ -204,11 +204,15 @@ export async function listAllTmuxSessions(): Promise<TmuxSessionInfo[]> {
   }
 }
 
-export async function createSession(name: string, cwd: string): Promise<void> {
+export async function createSession(name: string, cwd: string, tunnelUrl?: string): Promise<void> {
   const tmuxArgs = ['new-session', '-d', '-s', name, '-c', cwd];
   const opencodeTuiConfigPath = resolveOpencodeTuiConfigPath();
   if (opencodeTuiConfigPath) {
     tmuxArgs.push('-e', `OPENCODE_TUI_CONFIG=${opencodeTuiConfigPath}`);
+  }
+
+  if (tunnelUrl) {
+    tmuxArgs.push('-e', `OPENCODE_TUI_TUNNEL_URL=${tunnelUrl}`);
   }
 
   await execTmux(tmuxArgs);

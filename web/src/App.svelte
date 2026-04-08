@@ -2,7 +2,15 @@
   import { get } from 'svelte/store';
   import { requestedWorkspacePage } from './lib/workspacePage';
   import { workspace } from './lib/workspace';
-  import { deleteSession } from './lib/api';
+  import { appView } from './lib/appView';
+  import { deleteSession, getSession } from './lib/api';
+  import {
+    ACTIVATE_SESSION_EVENT,
+    consumeRequestedSessionActivation,
+    dispatchSessionActivation,
+    isActivateSessionPayload,
+    setupNotificationAudioUnlock,
+  } from './lib/notifications';
   import SessionList from './pages/SessionList.svelte';
   import WorkspaceView from './pages/WorkspaceView.svelte';
   import SessionTabs from './components/SessionTabs.svelte';
@@ -10,6 +18,10 @@
   // Navigation between home and workspace
   let currentView: 'home' | 'workspace' = $state('home');
   let showWorkspaceLogo = $state(false);
+
+  $effect(() => {
+    appView.set(currentView);
+  });
 
   $effect(() => {
     if (currentView === 'workspace') {
@@ -76,6 +88,86 @@
   });
 
   let headerHeight = $state(40);
+
+  function openTabInWorkspace(sessionId: string): void {
+    workspace.activateTab(sessionId);
+    const tabIndex = get(workspace).tabs.findIndex((tab) => tab.sessionId === sessionId);
+    if (tabIndex >= 0) {
+      requestedWorkspacePage.set(tabIndex);
+    }
+    currentView = 'workspace';
+  }
+
+  async function activateRequestedSession(sessionId: string): Promise<void> {
+    const existingTab = get(workspace).tabs.find((candidate) => candidate.sessionId === sessionId);
+
+    if (!existingTab) {
+      try {
+        const session = await getSession(sessionId);
+        if (!session) {
+          return;
+        }
+
+        workspace.openTab({
+          sessionId: session.id,
+          title: session.cwd.split('/').pop() || session.id.slice(0, 8),
+          cwd: session.cwd,
+          status: session.status,
+          attention: 'none',
+        });
+      } catch (error) {
+        console.error('[notifications] Failed to open requested session', error);
+        return;
+      }
+    }
+
+    openTabInWorkspace(sessionId);
+  }
+
+  $effect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const messageHandler = (event: MessageEvent<unknown>) => {
+      const payload = event.data;
+      if (!isActivateSessionPayload(payload)) {
+        return;
+      }
+
+      dispatchSessionActivation(payload.sessionId);
+    };
+
+    const activationHandler = (event: Event) => {
+      const customEvent = event as CustomEvent<{ sessionId?: string }>;
+      const sessionId = customEvent.detail?.sessionId;
+      if (typeof sessionId !== 'string') {
+        return;
+      }
+
+      void activateRequestedSession(sessionId);
+    };
+
+    window.addEventListener(ACTIVATE_SESSION_EVENT, activationHandler);
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', messageHandler);
+    }
+
+    const pendingSessionId = consumeRequestedSessionActivation();
+    if (pendingSessionId) {
+      dispatchSessionActivation(pendingSessionId);
+    }
+
+    setupNotificationAudioUnlock();
+
+    return () => {
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', messageHandler);
+      }
+      window.removeEventListener(ACTIVATE_SESSION_EVENT, activationHandler);
+    };
+  });
 </script>
 
 <div class="app-shell">
@@ -116,10 +208,7 @@
     {#if currentView === 'home' || $workspace.tabs.length === 0}
       <SessionList onopenSession={(e) => {
         workspace.openTab(e);
-        const tabIndex = get(workspace).tabs.findIndex(t => t.sessionId === e.sessionId);
-        if (tabIndex >= 0) {
-          requestedWorkspacePage.set(tabIndex);
-        }
+        openTabInWorkspace(e.sessionId);
       }} />
     {:else}
       <WorkspaceView {headerHeight} />

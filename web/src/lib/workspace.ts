@@ -5,6 +5,9 @@ export interface WorkspaceTab {
   title: string;
   cwd: string;
   status: 'running' | 'starting' | 'exited' | 'failed' | 'interrupted';
+  attention?: 'question' | 'permission' | 'none';
+  permissionId?: string;
+  questionId?: string;
 }
 
 export function isTerminalTabEnded(status: WorkspaceTab['status']): boolean {
@@ -19,7 +22,42 @@ function loadFromStorage(): { tabs: WorkspaceTab[]; activeTabId: string | null }
     if (stored) {
       const parsed = JSON.parse(stored);
       if (parsed && Array.isArray(parsed.tabs)) {
-        return { tabs: parsed.tabs, activeTabId: parsed.activeTabId || null };
+        const tabs = parsed.tabs
+          .filter((tab) => tab && typeof tab === 'object')
+          .map((tab) => {
+            const record = tab as Record<string, unknown>;
+            const attentionRaw = record.attention;
+            const attention =
+              attentionRaw === 'question' ||
+              attentionRaw === 'permission' ||
+              attentionRaw === 'none'
+                ? attentionRaw
+                : 'none';
+
+            return {
+              sessionId: typeof record.sessionId === 'string' ? record.sessionId : '',
+              title: typeof record.title === 'string' ? record.title : '',
+              cwd: typeof record.cwd === 'string' ? record.cwd : '',
+              status:
+                record.status === 'starting' ||
+                record.status === 'running' ||
+                record.status === 'exited' ||
+                record.status === 'failed' ||
+                record.status === 'interrupted'
+                  ? record.status
+                  : 'running',
+              attention,
+              permissionId:
+                typeof record.permissionId === 'string' ? record.permissionId : undefined,
+              questionId: typeof record.questionId === 'string' ? record.questionId : undefined,
+            } satisfies WorkspaceTab;
+          })
+          .filter((tab) => tab.sessionId.length > 0);
+
+        return {
+          tabs,
+          activeTabId: typeof parsed.activeTabId === 'string' ? parsed.activeTabId : null,
+        };
       }
     }
   } catch {
@@ -64,13 +102,21 @@ function createWorkspaceStore() {
           return {
             ...state,
             tabs: state.tabs.map((tab) =>
-              tab.sessionId === session.sessionId ? { ...tab, ...session } : tab,
+              tab.sessionId === session.sessionId
+                ? {
+                    ...tab,
+                    ...session,
+                    attention: session.attention ?? tab.attention ?? 'none',
+                    permissionId: session.permissionId ?? tab.permissionId,
+                    questionId: session.questionId ?? tab.questionId,
+                  }
+                : tab,
             ),
             activeTabId: session.sessionId,
           };
         }
         return {
-          tabs: [...state.tabs, session],
+          tabs: [...state.tabs, { ...session, attention: session.attention ?? 'none' }],
           activeTabId: session.sessionId,
         };
       });
@@ -86,7 +132,15 @@ function createWorkspaceStore() {
       });
     },
     activateTab(sessionId: string) {
-      update((state) => ({ ...state, activeTabId: sessionId }));
+      update((state) => ({
+        ...state,
+        activeTabId: sessionId,
+        tabs: state.tabs.map((tab) =>
+          tab.sessionId === sessionId
+            ? { ...tab, attention: 'none', permissionId: undefined, questionId: undefined }
+            : tab,
+        ),
+      }));
     },
     swapToFront(sessionId: string) {
       update((state) => {
@@ -104,6 +158,41 @@ function createWorkspaceStore() {
       update((state) => ({
         ...state,
         tabs: state.tabs.map((t) => (t.sessionId === sessionId ? { ...t, status } : t)),
+      }));
+    },
+    updateTabAttention(sessionId: string, reason: WorkspaceTab['attention'] = 'none', id?: string) {
+      update((state) => ({
+        ...state,
+        tabs: state.tabs.map((tab) => {
+          if (tab.sessionId !== sessionId) {
+            return tab;
+          }
+
+          if (reason === 'question') {
+            return {
+              ...tab,
+              attention: 'question',
+              questionId: typeof id === 'string' ? id : tab.questionId,
+              permissionId: undefined,
+            };
+          }
+
+          if (reason === 'permission') {
+            return {
+              ...tab,
+              attention: 'permission',
+              permissionId: typeof id === 'string' ? id : tab.permissionId,
+              questionId: undefined,
+            };
+          }
+
+          return {
+            ...tab,
+            attention: 'none',
+            permissionId: undefined,
+            questionId: undefined,
+          };
+        }),
       }));
     },
     get isWorkspaceActive() {

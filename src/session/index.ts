@@ -85,6 +85,12 @@ function buildCommand(command: string, args: string[]): string {
   return quoted.join(' ');
 }
 
+function normalizeTunnelUrl(host: string, port: number): string {
+  const normalizedHost =
+    host === '0.0.0.0' || host === '::' || host === '[::]' ? '127.0.0.1' : host;
+  return `http://${normalizedHost}:${port}`;
+}
+
 function mapRecordToInfo(record: SessionRecord): SessionInfo {
   return {
     id: record.id,
@@ -140,7 +146,11 @@ export class SessionSupervisor {
     this.sessions.set(id, sessionInfo);
 
     try {
-      await createSession(tmuxName, cwd);
+      await createSession(
+        tmuxName,
+        cwd,
+        normalizeTunnelUrl(this.config.server.host, this.config.server.port),
+      );
       await sendCommand(tmuxName, command);
 
       sessionInfo.status = 'running';

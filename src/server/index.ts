@@ -48,6 +48,24 @@ type WebSocketIncomingMessage =
   | { type: 'resize'; cols?: unknown; rows?: unknown }
   | { type: 'ping' };
 
+interface OpencodeNotifyPayload {
+  type:
+    | 'permission_requested'
+    | 'permission_resolved'
+    | 'question_requested'
+    | 'question_resolved'
+    | 'session_idle'
+    | 'dialog_finished';
+  sessionId: string;
+  opencodeSessionId?: string;
+  tmuxSessionName?: string;
+  projectName?: string;
+  title?: string;
+  permissionId?: string | null;
+  questionId?: string | null;
+  timestamp?: string;
+}
+
 let runtimeState: RuntimeState | null = null;
 let stopInProgress: Promise<void> | null = null;
 
@@ -190,6 +208,32 @@ function setupRoutes(
     activeStreams.delete(sessionId);
   };
 
+  const listAllSockets = (): StreamSocket[] => {
+    const all: StreamSocket[] = [];
+    for (const set of activeStreams.values()) {
+      for (const socket of set) {
+        all.push(socket);
+      }
+    }
+    return all;
+  };
+
+  const broadcastOpencodeNotify = (payload: OpencodeNotifyPayload): void => {
+    const message = JSON.stringify({
+      type: payload.type,
+      sessionId: payload.sessionId,
+      data: payload,
+    });
+
+    for (const socket of listAllSockets()) {
+      try {
+        socket.send(message);
+      } catch {
+        // best-effort fanout
+      }
+    }
+  };
+
   app.get<{ Querystring: { q?: string } }>('/api/fs/suggest', async (request) => {
     const q = typeof request.query.q === 'string' ? request.query.q : '';
     return { suggestions: suggestPaths(q, 5) };
@@ -201,6 +245,61 @@ function setupRoutes(
 
   app.get('/api/tmux/sessions', async () => {
     return { sessions: await listAllTmuxSessions() };
+  });
+
+  app.post<{ Body: Record<string, unknown> }>('/api/opencode-notify', async (request, reply) => {
+    const body = request.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return reply.code(400).send({ error: 'Request body must be an object' });
+    }
+
+    const rawType = body.type;
+    const rawSessionId = body.sessionId;
+    const rawTmuxSessionName = body.tmuxSessionName;
+    const rawOpencodeSessionId = body.opencodeSessionId;
+
+    if (typeof rawType !== 'string' || rawType.trim().length === 0) {
+      return reply.code(400).send({ error: 'type is required' });
+    }
+
+    if (typeof rawSessionId !== 'string' || rawSessionId.trim().length === 0) {
+      return reply.code(400).send({ error: 'sessionId is required' });
+    }
+
+    const supportedTypes: ReadonlySet<OpencodeNotifyPayload['type']> = new Set([
+      'permission_requested',
+      'permission_resolved',
+      'question_requested',
+      'question_resolved',
+      'session_idle',
+      'dialog_finished',
+    ]);
+
+    if (!supportedTypes.has(rawType as OpencodeNotifyPayload['type'])) {
+      return reply.code(400).send({ error: `Unsupported notification type: ${rawType}` });
+    }
+
+    const mappedSession =
+      typeof rawTmuxSessionName === 'string' && rawTmuxSessionName.trim().length > 0
+        ? findManagedSessionByTmuxSessionName(db, rawTmuxSessionName)
+        : null;
+    const resolvedSessionId = mappedSession?.id ?? rawSessionId;
+
+    const payload: OpencodeNotifyPayload = {
+      type: rawType as OpencodeNotifyPayload['type'],
+      sessionId: resolvedSessionId,
+      opencodeSessionId:
+        typeof rawOpencodeSessionId === 'string' ? rawOpencodeSessionId : undefined,
+      tmuxSessionName: typeof rawTmuxSessionName === 'string' ? rawTmuxSessionName : undefined,
+      projectName: typeof body.projectName === 'string' ? body.projectName : undefined,
+      title: typeof body.title === 'string' ? body.title : undefined,
+      permissionId: typeof body.permissionId === 'string' ? body.permissionId : null,
+      questionId: typeof body.questionId === 'string' ? body.questionId : null,
+      timestamp: typeof body.timestamp === 'string' ? body.timestamp : new Date().toISOString(),
+    };
+
+    broadcastOpencodeNotify(payload);
+    return reply.code(202).send({ ok: true });
   });
 
   app.post<{
