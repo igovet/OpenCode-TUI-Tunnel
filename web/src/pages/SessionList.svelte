@@ -4,6 +4,7 @@
   import { listSessions, getProjectHistory, getTmuxSessions, attachTmuxSession, launchSession } from '../lib/api';
   import SessionCard from '../components/SessionCard.svelte';
   import PathAutocomplete from '../components/PathAutocomplete.svelte';
+  import SettingsModal from '../components/SettingsModal.svelte';
 
   let { onopenSession } = $props<{ onopenSession: (tab: WorkspaceTab) => void }>();
 
@@ -16,6 +17,7 @@
 
   interface ErrorModal { title: string; message: string; hint: string }
   let errorModal = $state<ErrorModal | null>(null);
+  let settingsOpen = $state(false);
 
   function showLimitError() {
     errorModal = {
@@ -113,6 +115,13 @@
 <div class="dashboard">
   <header class="dash-header">
     <h1><span class="prompt"></span>WORKSTATION DASHBOARD</h1>
+    <button class="btn btn-settings" onclick={() => settingsOpen = true} aria-label="Open settings">
+      <svg class="icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+        <path d="M12 15a3 3 0 100-6 3 3 0 000 6z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <span class="btn-text">SETTINGS</span>
+    </button>
   </header>
 
   <main class="dash-grid">
@@ -188,6 +197,8 @@
       </div>
     </div>
   {/if}
+
+  <SettingsModal open={settingsOpen} onClose={() => settingsOpen = false} />
 </div>
 
 <style>
@@ -203,6 +214,47 @@
     margin-bottom: var(--space-6);
     padding-bottom: var(--space-3);
     border-bottom: 1px solid var(--border-accent);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+  }
+
+  .btn-settings {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    letter-spacing: 1px;
+    cursor: pointer;
+    border: 1px solid var(--border-default);
+    background: var(--bg-elevated);
+    color: var(--text-muted);
+    transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .btn-settings .icon {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+  }
+
+  .btn-settings:hover {
+    border-color: var(--accent-blue);
+    color: var(--accent-blue);
+    background: rgba(88, 166, 255, 0.1);
+  }
+
+  @media (max-width: 768px) {
+    .btn-settings .btn-text {
+      display: none;
+    }
   }
 
   h1 {
@@ -425,5 +477,24 @@
     align-self: flex-end;
     font-weight: 700;
     letter-spacing: 1px;
+  }
+
+  @media (max-width: 768px) {
+    button:hover,
+    button:focus,
+    button:focus-visible,
+    .btn:hover,
+    .btn:focus,
+    .btn:focus-visible,
+    .btn-settings:hover,
+    .btn-settings:focus,
+    .btn-settings:focus-visible,
+    .list-item:hover {
+      outline: none;
+      background: inherit;
+      color: inherit;
+      border-color: inherit;
+      box-shadow: none;
+    }
   }
 </style>

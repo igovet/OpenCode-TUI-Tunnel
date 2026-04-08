@@ -1,14 +1,71 @@
-# @igovet/opencode-tui-tunnel
+# OpenCode TUI Tunnel
 
-Access your `opencode` TUI sessions from any browser — desktop or mobile.
+<p align="center"><strong>Run your <code>opencode</code> terminal sessions anywhere — in a clean browser UI, on desktop or mobile.</strong></p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/@igovet/opencode-tui-tunnel"><img alt="npm version" src="https://img.shields.io/npm/v/%40igovet%2Fopencode-tui-tunnel?style=for-the-badge"></a>
+  <a href="./LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge"></a>
+  <img alt="node >=20" src="https://img.shields.io/badge/node-%3E%3D20-339933?style=for-the-badge&logo=node.js&logoColor=white">
+</p>
+
+## ✨ What is OpenCode TUI Tunnel?
+
+OpenCode TUI Tunnel is a web tunnel for `opencode` terminal sessions. It gives you a browser-accessible workspace where you can launch, view, and manage multiple `opencode` sessions without being tied to a single terminal window.
+
+It exists to make terminal-first workflows easier to access anywhere: local laptop, remote machine, desktop browser, or phone — while keeping sessions persistent through `tmux`.
+
+## 🚀 Key Features
+
+- 🖥️ **Browser-first terminal access** for `opencode` sessions (desktop + mobile)
+- 🧠 **tmux-backed persistence** so sessions survive refreshes and restarts
+- ➕ **Launch and manage multiple sessions** from a single web UI
+- 📱 **Mobile-friendly controls** with an extended terminal key bar (Esc, Tab, Ctrl, arrows)
+- ⚡ **PWA support** for installable app-like experience
+- 🔔 **Browser notifications** when `opencode` asks questions or requests permissions
+- 🔧 **Operational CLI tools** (`start`, `status`, `sessions`, `config`, `doctor`)
+- 🚀 **Autostart support** on Linux (`systemd --user`) and macOS (`LaunchAgent`)
+- 🔒 **Cloudflare Tunnel + Zero Trust friendly** for secure remote access
+
+## 📸 Screenshots
 
 <details>
-  <summary>📸 View project screenshots</summary>
+  <summary>View screenshots</summary>
   <img src="./screenshots/screenshot-1.png" width="1024"><br>
   <img src="./screenshots/screenshot-2.png" width="1024"><br>
   <img src="./screenshots/screenshot-3.png" width="250">
   <img src="./screenshots/screenshot-4.png" width="250">
 </details>
+
+> 🎬 **Suggested GIF demo:** start the tunnel, create a new `opencode` session, reconnect from mobile, and resume the same live session.
+
+## 🎯 Use Cases
+
+- 👨‍💻 **Developers** who want persistent `opencode` sessions across devices
+- 🧪 **AI-assisted coding workflows** where multiple terminal sessions run in parallel
+- 🏠 **Homelab / remote workstation users** who need secure browser access without opening inbound ports
+- 📱 **On-the-go debugging** from a phone when you're away from your primary machine
+
+## ⚡ Quick Start
+
+```bash
+npm install -g @igovet/opencode-tui-tunnel
+opencode-tui-tunnel doctor
+opencode-tui-tunnel start
+```
+
+Then open the printed URL (default: `http://127.0.0.1:4096`).
+
+## 📖 Documentation
+
+Continue below for full docs:
+
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Usage](#usage)
+- [CLI Reference](#cli-reference)
+- [Cloudflare Tunnel Setup (Zero Trust Authentication)](#cloudflare-tunnel-setup-zero-trust-authentication)
+
+---
 
 ## Requirements
 

@@ -13,6 +13,10 @@ const assets = [
     to: resolve(projectRoot, 'dist/assets/opencode-tui-30fps.js'),
   },
   {
+    from: resolve(projectRoot, 'assets/opencode-tui-notify.js'),
+    to: resolve(projectRoot, 'dist/assets/opencode-tui-notify.js'),
+  },
+  {
     from: resolve(projectRoot, 'assets/opencode-tui-config.json'),
     to: resolve(projectRoot, 'dist/assets/opencode-tui-config.json'),
   },

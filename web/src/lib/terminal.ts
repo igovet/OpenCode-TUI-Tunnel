@@ -1,7 +1,66 @@
 import { terminalManagers } from './zoomStore.svelte';
+import { get } from 'svelte/store';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { workspace } from './workspace';
+import { appView } from './appView';
+import { showBrowserNotification } from './notifications';
 import '@xterm/xterm/css/xterm.css';
+
+type OpencodeNotifyType =
+  | 'permission_requested'
+  | 'permission_resolved'
+  | 'question_requested'
+  | 'question_resolved'
+  | 'session_idle'
+  | 'dialog_finished';
+
+interface OpencodeNotifyPayload {
+  type: OpencodeNotifyType;
+  sessionId: string;
+  title?: string;
+  projectName?: string;
+  permissionId?: string | null;
+  questionId?: string | null;
+  timestamp?: string;
+}
+
+const OPENCODE_NOTIFY_TYPES: ReadonlySet<OpencodeNotifyType> = new Set([
+  'permission_requested',
+  'permission_resolved',
+  'question_requested',
+  'question_resolved',
+  'session_idle',
+  'dialog_finished',
+]);
+
+const NOTIFY_DEDUPE_WINDOW_MS = 2_000;
+const recentNotificationKeys = new Map<string, number>();
+function shouldHandleNotification(payload: OpencodeNotifyPayload): boolean {
+  const key = [
+    payload.type,
+    payload.sessionId,
+    payload.permissionId ?? '-',
+    payload.questionId ?? '-',
+    payload.timestamp ?? '-',
+  ].join(':');
+
+  const now = Date.now();
+  const previous = recentNotificationKeys.get(key);
+  if (typeof previous === 'number' && now - previous < NOTIFY_DEDUPE_WINDOW_MS) {
+    return false;
+  }
+
+  recentNotificationKeys.set(key, now);
+
+  for (const [entry, seenAt] of recentNotificationKeys) {
+    if (now - seenAt > NOTIFY_DEDUPE_WINDOW_MS * 2) {
+      recentNotificationKeys.delete(entry);
+    }
+  }
+
+  return true;
+}
 
 export function refreshAllManagers() {
   requestAnimationFrame(() => {
@@ -36,6 +95,7 @@ export class TerminalManager {
   private _handleVisibilityChange?: () => void;
   private _xtermTextarea: HTMLTextAreaElement | null = null;
   private _originalTextareaFocus: (() => void) | null = null;
+  private lastAttentionClearAt = 0;
   _webglAddon?: import('@xterm/addon-webgl').WebglAddon;
 
   constructor(element: HTMLElement, cols: number, rows: number) {
@@ -282,6 +342,11 @@ export class TerminalManager {
 
         const typed = msg as { type: string; message?: string; exitCode?: number; status?: string };
 
+        const handledNotify = this.handleNotifyFrame(typed);
+        if (handledNotify) {
+          return;
+        }
+
         if (typed.type === 'ready') {
           this.streamReady = true;
           return;
@@ -403,9 +468,136 @@ export class TerminalManager {
   }
 
   onData(data: string): void {
+    this.clearAttentionFromUserInput(data);
+
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: 'input', data }));
     }
+  }
+
+  private clearAttentionFromUserInput(data: string): void {
+    if (!this.sessionId || typeof data !== 'string' || data.length === 0) {
+      return;
+    }
+
+    if (/^[\r\n\t]*$/.test(data)) {
+      return;
+    }
+
+    const state = get(workspace);
+    const tab = state.tabs.find((candidate) => candidate.sessionId === this.sessionId);
+    if (!tab || !tab.attention || tab.attention === 'none') {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - this.lastAttentionClearAt < 250) {
+      return;
+    }
+
+    this.lastAttentionClearAt = now;
+    workspace.updateTabAttention(this.sessionId, 'none');
+  }
+
+  private handleNotifyFrame(msg: { type?: unknown; sessionId?: unknown; data?: unknown }): boolean {
+    if (!msg || typeof msg !== 'object') {
+      return false;
+    }
+
+    if (
+      typeof msg.type !== 'string' ||
+      !OPENCODE_NOTIFY_TYPES.has(msg.type as OpencodeNotifyType)
+    ) {
+      return false;
+    }
+
+    const topLevelSessionId = typeof msg.sessionId === 'string' ? msg.sessionId : undefined;
+    const dataObj =
+      msg.data && typeof msg.data === 'object' ? (msg.data as Record<string, unknown>) : {};
+    const payload: OpencodeNotifyPayload = {
+      type: msg.type as OpencodeNotifyType,
+      sessionId:
+        topLevelSessionId ??
+        (typeof dataObj.sessionId === 'string' ? dataObj.sessionId : (this.sessionId ?? '')),
+      title: typeof dataObj.title === 'string' ? dataObj.title : undefined,
+      projectName: typeof dataObj.projectName === 'string' ? dataObj.projectName : undefined,
+      permissionId: typeof dataObj.permissionId === 'string' ? dataObj.permissionId : null,
+      questionId: typeof dataObj.questionId === 'string' ? dataObj.questionId : null,
+      timestamp: typeof dataObj.timestamp === 'string' ? dataObj.timestamp : undefined,
+    };
+
+    if (!payload.sessionId) {
+      return true;
+    }
+
+    if (!shouldHandleNotification(payload)) {
+      return true;
+    }
+
+    const isTabActive =
+      document.visibilityState === 'visible' &&
+      document.hasFocus() &&
+      get(appView) === 'workspace' &&
+      get(workspace).activeTabId === payload.sessionId;
+
+    switch (payload.type) {
+      case 'permission_requested': {
+        if (!isTabActive) {
+          workspace.updateTabAttention(
+            payload.sessionId,
+            'permission',
+            payload.permissionId ?? undefined,
+          );
+        }
+        this.maybeNotify(
+          payload,
+          'Permission requested',
+          'OpenCode is waiting for permission input',
+        );
+        return true;
+      }
+      case 'question_requested': {
+        if (!isTabActive) {
+          workspace.updateTabAttention(
+            payload.sessionId,
+            'question',
+            payload.questionId ?? undefined,
+          );
+        }
+        this.maybeNotify(payload, 'Question requested', 'OpenCode is waiting for your answer');
+        return true;
+      }
+      case 'permission_resolved':
+      case 'question_resolved':
+      case 'session_idle': {
+        workspace.updateTabAttention(payload.sessionId, 'none');
+        return true;
+      }
+      case 'dialog_finished': {
+        this.maybeNotify(payload, 'Dialog finished', 'OpenCode dialog is finished');
+        return true;
+      }
+      default:
+        return true;
+    }
+  }
+
+  private maybeNotify(
+    payload: OpencodeNotifyPayload,
+    fallbackTitle: string,
+    fallbackBody: string,
+  ): void {
+    if (
+      document.visibilityState === 'visible' &&
+      document.hasFocus() &&
+      get(appView) === 'workspace' &&
+      get(workspace).activeTabId === payload.sessionId
+    ) {
+      return;
+    }
+
+    const title = payload.title ?? fallbackTitle;
+    void showBrowserNotification(title, fallbackBody, payload.sessionId, payload.projectName);
   }
 
   onExit(cb: (code: number) => void): void {

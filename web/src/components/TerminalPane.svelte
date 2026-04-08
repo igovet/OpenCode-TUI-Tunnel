@@ -13,12 +13,11 @@
   let unregisterManager: (() => void) | null = null;
   let containerReady = $state(false);
 
+  let tab = $derived($workspace.tabs.find((t) => t.sessionId === sessionId));
+  let tabEnded = $derived(tab ? isTerminalTabEnded(tab.status) : false);
 
   let resizeTimer: ReturnType<typeof setTimeout> | null = null;
   let ongoingResizeObserver: ResizeObserver | null = null;
-
-  let tab = $derived($workspace.tabs.find((t) => t.sessionId === sessionId));
-  let tabEnded = $derived(tab ? isTerminalTabEnded(tab.status) : false);
 
   let lastObservedW = 0;
   let lastObservedH = 0;
@@ -145,9 +144,14 @@
     if (resizeTimer) clearTimeout(resizeTimer);
   });
 
-  function handleClick() {
+  function handleClick(event: MouseEvent) {
+    if (event.target instanceof Element && event.target.closest('.zoom-toolbar')) {
+      return;
+    }
+
     if (!isActive) {
       workspace.activateTab(sessionId);
+      refreshAllManagers();
     }
     // Only focus (and open virtual keyboard) on non-touch/desktop devices
     const isTouch = window.matchMedia('(pointer: coarse)').matches;
@@ -174,7 +178,6 @@
       <button onclick={() => setZoom(zoomState.value + 1)}>+</button>
     </div>
   {/if}
-
   {#if !containerReady}
     <div class="terminal-placeholder"></div>
   {/if}
@@ -200,11 +203,6 @@
     font-family: monospace;
     font-size: 11px;
     color: #8b949e;
-    opacity: 0.5;
-    transition: opacity 0.2s;
-  }
-
-  .zoom-toolbar:hover {
     opacity: 1;
   }
 
@@ -294,5 +292,20 @@
     width: 100%;
     display: block;
     overflow: hidden !important;
+  }
+
+  @media (max-width: 768px) {
+    button:hover,
+    button:focus,
+    button:focus-visible,
+    .zoom-toolbar button:hover,
+    .zoom-toolbar button:focus,
+    .zoom-toolbar button:focus-visible {
+      outline: none;
+      background: inherit;
+      color: inherit;
+      border-color: inherit;
+      box-shadow: none;
+    }
   }
 </style>

@@ -1,18 +1,18 @@
 export interface SessionInfo {
-  id: string
-  status: 'starting' | 'running' | 'exited' | 'failed' | 'interrupted'
-  cwd: string
-  startedAt: string
-  tmuxName: string
-  cols: number
-  rows: number
-  clientCount: number
+  id: string;
+  status: 'starting' | 'running' | 'exited' | 'failed' | 'interrupted';
+  cwd: string;
+  startedAt: string;
+  tmuxName: string;
+  cols: number;
+  rows: number;
+  clientCount: number;
 }
 
 // Path autocomplete
 export interface PathSuggestion {
-  display: string;    // e.g. "~/Projects/myapp"
-  absolute: string;   // e.g. "/home/user/Projects/myapp"
+  display: string; // e.g. "~/Projects/myapp"
+  absolute: string; // e.g. "/home/user/Projects/myapp"
 }
 
 // Project history
@@ -34,8 +34,11 @@ export interface TmuxDiscoverySession {
 // Workspace tabs
 export interface WorkspaceTab {
   sessionId: string;
-  title: string;      // short display title (basename of cwd)
+  title: string; // short display title (basename of cwd)
   cwd: string;
   status: 'running' | 'starting' | 'exited' | 'failed' | 'interrupted';
-  isActive: boolean;
+  isActive?: boolean;
+  attention?: 'question' | 'permission' | 'none';
+  permissionId?: string;
+  questionId?: string;
 }

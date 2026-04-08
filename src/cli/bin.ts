@@ -19,6 +19,7 @@ import {
   saveConfig,
   type AppConfig,
 } from '../config/index.js';
+import { getLiveProcessState } from '../runtime/process-state.js';
 import { registerInternalCommands } from './commands/internal.js';
 import { registerStartCommand } from './commands/start.js';
 import { registerStatusCommand } from './commands/status.js';
@@ -208,7 +209,8 @@ async function requestServerJson(
   method: 'GET' | 'DELETE' = 'GET',
 ): Promise<unknown> {
   const config = loadConfig();
-  const baseUrl = `http://127.0.0.1:${config.server.port}`;
+  const runtime = getLiveProcessState({ cleanupStale: false });
+  const baseUrl = runtime?.url ?? `http://${config.server.host}:${config.server.port}`;
   const targetUrl = `${baseUrl}${pathname}`;
 
   let response: Response;
