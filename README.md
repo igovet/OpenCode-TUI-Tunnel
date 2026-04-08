@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@igovet/opencode-tui-tunnel"><img alt="npm version" src="https://img.shields.io/npm/v/%40igovet%2Fopencode-tui-tunnel?style=for-the-badge"></a>
   <a href="./LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge"></a>
-  <img alt="node >=20" src="https://img.shields.io/badge/node-%3E%3D20-339933?style=for-the-badge&logo=node.js&logoColor=white">
+  <a href="https://nodejs.org/en/download"><img alt="node greater than or equal to 20" src="https://img.shields.io/badge/node-%3E%3D20-339933?style=for-the-badge&logo=node.js&logoColor=white"></a>
 </p>
 
 ## ✨ What is OpenCode TUI Tunnel?
@@ -35,8 +35,6 @@ It exists to make terminal-first workflows easier to access anywhere: local lapt
   <img src="./screenshots/screenshot-3.png" width="250">
   <img src="./screenshots/screenshot-4.png" width="250">
 </details>
-
-> 🎬 **Suggested GIF demo:** start the tunnel, create a new `opencode` session, reconnect from mobile, and resume the same live session.
 
 ## 🎯 Use Cases
 
