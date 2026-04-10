@@ -26,16 +26,6 @@ It exists to make terminal-first workflows easier to access anywhere: local lapt
 - 🚀 **Autostart support** on Linux (`systemd --user`) and macOS (`LaunchAgent`)
 - 🔒 **Cloudflare Tunnel + Zero Trust friendly** for secure remote access
 
-## 📸 Screenshots
-
-<details>
-  <summary>View screenshots</summary>
-  <img src="./screenshots/screenshot-1.png" width="1024"><br>
-  <img src="./screenshots/screenshot-2.png" width="1024"><br>
-  <img src="./screenshots/screenshot-3.png" width="250">
-  <img src="./screenshots/screenshot-4.png" width="250">
-</details>
-
 ## 🎯 Use Cases
 
 - 👨‍💻 **Developers** who want persistent `opencode` sessions across devices

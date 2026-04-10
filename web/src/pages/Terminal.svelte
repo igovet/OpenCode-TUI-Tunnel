@@ -55,7 +55,7 @@
 <div class="terminal-page">
   <div class="top-bar">
     <div class="left">
-      <button class="back" onclick={onBack}>← Back</button>
+      <button class="back" onclick={onBack}>BACK</button>
       <span class="cwd" title={session?.cwd || ''}>
         {session?.cwd ? session.cwd.split('/').pop() : 'Loading...'}
       </span>
@@ -67,20 +67,20 @@
     </div>
     
     <div class="right">
-      <button class="kill" onclick={killSession} disabled={exitCode !== null}>Kill</button>
+      <button class="kill" onclick={killSession} disabled={exitCode !== null}>KILL</button>
     </div>
   </div>
   
   <div class="terminal-wrapper" bind:this={terminalContainer}>
     {#if exitCode !== null}
       <div class="overlay">
-        <h2>Session exited (code {exitCode})</h2>
-        <button onclick={onBack}>Return to List</button>
+        <h2>[ SESSION EXITED ({exitCode}) ]</h2>
+        <button onclick={onBack}>RETURN TO LIST</button>
       </div>
     {/if}
   </div>
   
-  <MobileKeybar write={(k: string) => { manager?.onData(k) }} />
+  <MobileKeybar />
 </div>
 
 <style>
@@ -115,7 +115,7 @@
     border: 1px solid #30363d;
     color: #c9d1d9;
     padding: 4px 12px;
-    border-radius: 6px;
+    border-radius: 0;
     cursor: pointer;
     font-size: 0.9rem;
   }
@@ -149,7 +149,7 @@
   .status-badge {
     font-size: 0.75rem;
     padding: 2px 6px;
-    border-radius: 12px;
+    border-radius: 0;
     text-transform: uppercase;
     font-weight: bold;
   }

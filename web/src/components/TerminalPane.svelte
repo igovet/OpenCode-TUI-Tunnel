@@ -18,9 +18,42 @@
 
   let resizeTimer: ReturnType<typeof setTimeout> | null = null;
   let ongoingResizeObserver: ResizeObserver | null = null;
+  let zoomMenuOpen = $state(false);
+
+  const ZOOM_PRESETS = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24];
 
   let lastObservedW = 0;
   let lastObservedH = 0;
+
+  $effect(() => {
+    if (!zoomMenuOpen) {
+      return;
+    }
+
+    const onDocumentClick = (event: MouseEvent) => {
+      if (event.target instanceof Element && event.target.closest('.zoom-toolbar')) {
+        return;
+      }
+
+      zoomMenuOpen = false;
+    };
+
+    document.addEventListener('click', onDocumentClick);
+    return () => {
+      document.removeEventListener('click', onDocumentClick);
+    };
+  });
+
+  function toggleZoomMenu(event: Event) {
+    event.stopPropagation();
+    zoomMenuOpen = !zoomMenuOpen;
+  }
+
+  function selectZoom(event: Event, value: number) {
+    event.stopPropagation();
+    setZoom(value);
+    zoomMenuOpen = false;
+  }
 
   function setupResizeObserver(el: HTMLElement) {
     ongoingResizeObserver = new ResizeObserver((entries) => {
@@ -158,13 +191,14 @@
     if (!isTouch) {
       manager?.terminal.focus();
     }
+    zoomMenuOpen = false;
   }
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <!-- svelte-ignore a11y_interactive_supports_focus -->
 <div
-  class="terminal-pane {isActive && showBorder ? 'active' : ''}"
+  class="terminal-pane {showBorder ? 'show-border' : ''} {isActive && showBorder ? 'active' : ''}"
   onclick={handleClick}
   ontouchstart={(e) => e.stopPropagation()}
   ontouchmove={(e) => e.stopPropagation()}
@@ -173,9 +207,24 @@
 >
   {#if isActive}
     <div class="zoom-toolbar">
-      <button onclick={() => setZoom(zoomState.value - 1)}>-</button>
-      <span>{zoomState.value}px</span>
-      <button onclick={() => setZoom(zoomState.value + 1)}>+</button>
+      <button class="zoom-trigger" onclick={toggleZoomMenu} aria-haspopup="menu" aria-expanded={zoomMenuOpen} aria-label="Terminal zoom presets">
+        {zoomState.value}px ▾
+      </button>
+      {#if zoomMenuOpen}
+        <div class="zoom-menu" role="menu" aria-label="Zoom level options">
+          {#each ZOOM_PRESETS as size}
+            <button
+              class="zoom-option"
+              class:selected={zoomState.value === size}
+              role="menuitemradio"
+              aria-checked={zoomState.value === size}
+              onclick={(e) => selectZoom(e, size)}
+            >
+              {size}px
+            </button>
+          {/each}
+        </div>
+      {/if}
     </div>
   {/if}
   {#if !containerReady}
@@ -191,33 +240,52 @@
     top: 0;
     right: 16px;
     z-index: 10;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    background: #161b22;
-    padding: 2px 8px;
-    border: 1px solid #30363d;
-    border-top: none;
-    border-bottom-left-radius: 4px;
-    border-bottom-right-radius: 4px;
-    font-family: monospace;
-    font-size: 11px;
-    color: #8b949e;
-    opacity: 1;
   }
 
-  .zoom-toolbar button {
+  .zoom-trigger {
+    font-size: 11px;
+    padding: 2px 6px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: 0;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: var(--font-mono);
+    white-space: nowrap;
+  }
+
+  .zoom-menu {
+    position: absolute;
+    top: calc(100% + 2px);
+    right: 0;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: 0;
+    overflow: hidden;
+    z-index: 100;
+    min-width: 60px;
+  }
+
+  .zoom-option {
+    display: block;
+    width: 100%;
+    text-align: right;
+    padding: 3px 8px;
+    font-size: 11px;
+    font-family: var(--font-mono);
     background: none;
     border: none;
-    color: #e6edf3;
+    color: var(--text-secondary);
     cursor: pointer;
-    padding: 0 4px;
-    font-family: monospace;
-    font-size: 12px;
   }
 
-  .zoom-toolbar button:hover {
-    color: #58a6ff;
+  .zoom-option:hover {
+    background: var(--bg-overlay);
+  }
+
+  .zoom-option.selected {
+    color: var(--accent-blue);
+    background: var(--bg-overlay);
   }
 
   .terminal-pane {
@@ -225,13 +293,17 @@
     min-height: 0;
     min-width: 0;
     position: relative;
-    border: 1px solid transparent;
+    border: 1px solid var(--border-default);
+    border-top-width: 2px;
+    border-top-color: transparent;
     height: 100%;
     width: 100%;
     overflow: hidden;
     padding: 0;
     margin: 0;
     box-sizing: border-box;
+    opacity: 1;
+    transition: opacity 0.2s ease, border-top-color 0.2s ease;
   }
 
   .terminal-placeholder {
@@ -256,8 +328,13 @@
     transform: translateZ(0) !important;
   }
 
-  .terminal-pane.active {
-    border-color: var(--color-primary, #58a6ff);
+  .terminal-pane.show-border:not(.active) {
+    opacity: 0.5;
+  }
+
+  .terminal-pane.show-border.active {
+    opacity: 1;
+    border-top-color: var(--accent-blue);
   }
 
   :global(.terminal-pane .xterm-viewport) {
@@ -298,9 +375,12 @@
     button:hover,
     button:focus,
     button:focus-visible,
-    .zoom-toolbar button:hover,
-    .zoom-toolbar button:focus,
-    .zoom-toolbar button:focus-visible {
+    .zoom-trigger:hover,
+    .zoom-trigger:focus,
+    .zoom-trigger:focus-visible,
+    .zoom-option:hover,
+    .zoom-option:focus,
+    .zoom-option:focus-visible {
       outline: none;
       background: inherit;
       color: inherit;

@@ -2,6 +2,7 @@
   import TerminalPane from './TerminalPane.svelte';
   import { workspace } from '../lib/workspace';
   import { requestedWorkspacePage } from '../lib/workspacePage';
+  import { workspacePage, workspaceTotalPages, workspaceMaxPanes } from '../lib/workspaceDisplay';
 
   let containerWidth = $state(0);
   
@@ -14,14 +15,20 @@
     containerWidth > 1600 ? 3 : 2
   );
 
-  let workspacePage = $state(0);
-  
   let totalPages = $derived(Math.ceil(tabs.length / maxPanes) || 1);
+
+  $effect(() => {
+    workspaceMaxPanes.set(maxPanes);
+  });
+
+  $effect(() => {
+    workspaceTotalPages.set(totalPages);
+  });
 
   // Ensure page is within bounds when tabs length changes
   $effect(() => {
-    if (workspacePage >= totalPages) {
-      workspacePage = Math.max(0, totalPages - 1);
+    if ($workspacePage >= totalPages) {
+      workspacePage.set(Math.max(0, totalPages - 1));
     }
   });
 
@@ -29,8 +36,8 @@
     const tabIdx = $requestedWorkspacePage;
     if (tabIdx !== null) {
       const targetPage = Math.floor(tabIdx / maxPanes);
-      if (targetPage !== workspacePage && targetPage < totalPages) {
-        workspacePage = targetPage;
+      if (targetPage !== $workspacePage && targetPage < totalPages) {
+        workspacePage.set(targetPage);
       }
       requestedWorkspacePage.set(null); // consume
     }
@@ -39,8 +46,15 @@
   let visiblePanes = $derived(
     containerWidth < 900
       ? tabs.filter(t => t.sessionId === activeSessionId)
-      : tabs.slice(workspacePage * maxPanes, (workspacePage + 1) * maxPanes)
+      : tabs.slice($workspacePage * maxPanes, ($workspacePage + 1) * maxPanes)
   );
+
+  function activateFirstTabOnPage(newPage: number) {
+    const firstTabIdx = newPage * maxPanes;
+    if (firstTabIdx < tabs.length) {
+      workspace.activateTab(tabs[firstTabIdx].sessionId);
+    }
+  }
 
   function handleKeydown(e: KeyboardEvent) {
     if (containerWidth < 900) return;
@@ -48,51 +62,33 @@
       if (e.key >= '1' && e.key <= '9') {
         const pageIdx = parseInt(e.key) - 1;
         if (pageIdx < totalPages) {
-          workspacePage = pageIdx;
+          workspacePage.set(pageIdx);
+          activateFirstTabOnPage(pageIdx);
           e.preventDefault();
         }
       } else if (e.key === 'ArrowLeft') {
-        if (workspacePage > 0) {
-          workspacePage--;
+        if ($workspacePage > 0) {
+          const newPage = $workspacePage - 1;
+          workspacePage.set(newPage);
+          activateFirstTabOnPage(newPage);
           e.preventDefault();
         }
       } else if (e.key === 'ArrowRight') {
-        if (workspacePage < totalPages - 1) {
-          workspacePage++;
+        if ($workspacePage < totalPages - 1) {
+          const newPage = $workspacePage + 1;
+          workspacePage.set(newPage);
+          activateFirstTabOnPage(newPage);
           e.preventDefault();
         }
       }
     }
   }
 
-  function getSessionsForPage(pageIndex: number) {
-    return tabs.slice(pageIndex * maxPanes, (pageIndex + 1) * maxPanes);
-  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
 
 <div class="terminal-grid-container">
-  {#if totalPages > 1 && containerWidth >= 900}
-    <div class="workspace-strip">
-      {#each [...Array(totalPages).keys()] as i}
-        <button 
-          class="workspace-slot" 
-          class:active={i === workspacePage}
-          onclick={() => workspacePage = i}
-        >
-          <span class="page-num">{i + 1}</span>
-          <div class="dots">
-            {#each getSessionsForPage(i) as session}
-              <div class="dot {session.status}" class:active-session={session.sessionId === activeSessionId}></div>
-            {/each}
-          </div>
-        </button>
-      {/each}
-      <kbd style="opacity: 0.45; font-size: 11px; margin-left: 8px;">Alt + &larr; / &rarr;</kbd>
-    </div>
-  {/if}
-
   <div class="terminal-grid" bind:clientWidth={containerWidth}>
     {#each visiblePanes as pane (pane.sessionId)}
       <div class="pane-wrapper">
@@ -117,69 +113,6 @@
     min-width: 0;
     background: var(--bg-primary, #0d1117);
   }
-
-  .workspace-strip {
-    display: flex;
-    justify-content: center;
-    gap: 8px;
-    padding: 4px 8px;
-    background: var(--bg-elevated, #161b22);
-    border-bottom: 1px solid var(--border-default, #30363d);
-    align-items: center;
-    overflow-x: auto;
-  }
-
-  .workspace-slot {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 2px 8px;
-    background: var(--bg-overlay, #21262d);
-    border: 1px solid transparent;
-    border-radius: 12px;
-    cursor: pointer;
-    color: var(--text-muted, #8b949e);
-    font-family: var(--font-mono, monospace);
-    font-size: 11px;
-    transition: all 0.2s ease;
-  }
-
-  .workspace-slot:hover {
-    background: var(--bg-overlay-hover, #30363d);
-  }
-
-  .workspace-slot.active {
-    background: var(--bg-primary, #0d1117);
-    border-color: var(--color-primary, #58a6ff);
-    color: var(--text-primary, #c9d1d9);
-  }
-
-  .page-num {
-    font-weight: bold;
-  }
-
-  .dots {
-    display: flex;
-    gap: 3px;
-  }
-
-  .dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--text-muted, #8b949e);
-    opacity: 0.5;
-  }
-
-  .dot.active-session {
-    box-shadow: 0 0 0 1px var(--color-primary, #58a6ff);
-    opacity: 1;
-  }
-
-  .dot.running { background: var(--accent-green, #2ea043); opacity: 0.8; }
-  .dot.failed, .dot.interrupted { background: var(--accent-red, #f85149); opacity: 0.8; }
-  .dot.running.active-session { opacity: 1; }
-  .dot.failed.active-session, .dot.interrupted.active-session { opacity: 1; }
 
   .terminal-grid {
     display: flex;

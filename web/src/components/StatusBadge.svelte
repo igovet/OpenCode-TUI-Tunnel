@@ -14,7 +14,7 @@
     align-items: center;
     gap: 6px;
     padding: 2px 8px;
-    border-radius: 12px;
+    border-radius: 0;
     background: var(--bg-surface, #161b22);
     border: 1px solid var(--border-default, #30363d);
   }

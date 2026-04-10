@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import type { SessionInfo, WorkspaceTab } from '../lib/types';
-  import { listSessions, getProjectHistory, getTmuxSessions, attachTmuxSession, launchSession } from '../lib/api';
+  import { listSessions, getProjectHistory, getTmuxSessions, attachTmuxSession, launchSession, deleteSession } from '../lib/api';
+  import { workspace } from '../lib/workspace';
   import SessionCard from '../components/SessionCard.svelte';
   import PathAutocomplete from '../components/PathAutocomplete.svelte';
   import SettingsModal from '../components/SettingsModal.svelte';
@@ -18,6 +19,8 @@
   interface ErrorModal { title: string; message: string; hint: string }
   let errorModal = $state<ErrorModal | null>(null);
   let settingsOpen = $state(false);
+  let killTarget = $state<string | null>(null);
+  let killing = $state(false);
 
   function showLimitError() {
     errorModal = {
@@ -110,6 +113,27 @@
     });
   }
 
+  const killTargetSession = $derived(killTarget ? sessions.find((session) => session.id === killTarget) ?? null : null);
+
+  async function confirmKill() {
+    if (!killTarget || killing) return;
+
+    const targetId = killTarget;
+    killing = true;
+    try {
+      await deleteSession(targetId);
+      if ($workspace.tabs.some((tab) => tab.sessionId === targetId)) {
+        workspace.closeTab(targetId);
+      }
+      killTarget = null;
+      await load();
+    } catch (error) {
+      console.error(error);
+    } finally {
+      killing = false;
+    }
+  }
+
 </script>
 
 <div class="dashboard">
@@ -143,10 +167,14 @@
 
       {#if sessions.length > 0}
         <section class="panel">
-          <h2 class="panel-title">&gt; ACTIVE_SESSIONS</h2>
+          <h2 class="panel-title">[ ACTIVE_SESSIONS ]</h2>
           <div class="panel-content grid-cards">
             {#each sessions as session (session.id)}
-              <SessionCard {session} onConnect={() => openSessionTab(session)} />
+              <SessionCard
+                {session}
+                onConnect={() => openSessionTab(session)}
+                onKill={(id) => killTarget = id}
+              />
             {/each}
           </div>
         </section>
@@ -198,6 +226,22 @@
     </div>
   {/if}
 
+  {#if killTarget}
+    <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="kill-modal-title" onclick={() => !killing && (killTarget = null)}>
+      <div class="modal-box kill-modal" onclick={(e) => e.stopPropagation()}>
+        <h2 id="kill-modal-title" class="modal-title">[ KILL SESSION? ]</h2>
+        <p class="modal-message">This will terminate the process.</p>
+        {#if killTargetSession}
+          <p class="modal-hint" title={killTargetSession.cwd}>{killTargetSession.cwd}</p>
+        {/if}
+        <div class="kill-actions">
+          <button class="btn modal-cancel" onclick={() => killTarget = null} disabled={killing}>CANCEL</button>
+          <button class="btn modal-kill" onclick={confirmKill} disabled={killing}>KILL</button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
   <SettingsModal open={settingsOpen} onClose={() => settingsOpen = false} />
 </div>
 
@@ -225,7 +269,7 @@
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-sm);
+    border-radius: 0;
     font-family: var(--font-mono);
     font-size: var(--font-size-xs);
     font-weight: 600;
@@ -286,7 +330,7 @@
   .panel {
     background: var(--bg-surface);
     border: 1px solid var(--border-default);
-    border-radius: var(--radius-md);
+    border-radius: 0;
     overflow: hidden;
     margin-bottom: var(--space-6);
     box-shadow: 0 4px 12px rgba(0,0,0,0.5);
@@ -355,7 +399,7 @@
     padding: var(--space-2) var(--space-3);
     background: var(--bg-base);
     border: 1px solid var(--border-muted);
-    border-radius: var(--radius-sm);
+    border-radius: 0;
     transition: border-color var(--transition-fast);
     min-width: 0;
   }
@@ -425,7 +469,7 @@
   .modal-box {
     background: var(--bg-surface);
     border: 1px solid var(--accent-red, #f85149);
-    border-radius: var(--radius-md);
+    border-radius: 0;
     padding: var(--space-6);
     max-width: 480px;
     width: 100%;
@@ -477,6 +521,47 @@
     align-self: flex-end;
     font-weight: 700;
     letter-spacing: 1px;
+  }
+
+  .kill-modal {
+    border-color: var(--border-default);
+    max-width: 420px;
+  }
+
+  .kill-actions {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
+  }
+
+  .modal-cancel {
+    background: transparent;
+    border: 1px solid var(--border-default);
+    color: var(--text-muted);
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 0;
+    cursor: pointer;
+  }
+
+  .modal-kill {
+    background: #5a0000;
+    border: 1px solid #aa3333;
+    color: #ff8888;
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 0;
+    cursor: pointer;
+  }
+
+  .modal-kill:hover {
+    background: #7a0000;
+  }
+
+  .modal-cancel:disabled,
+  .modal-kill:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   @media (max-width: 768px) {

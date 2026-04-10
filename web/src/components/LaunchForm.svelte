@@ -39,7 +39,7 @@
 </script>
 
 <div class="form">
-  <h2>Launch opencode</h2>
+  <h2>[ LAUNCH OPENCODE ]</h2>
   
   <div class="input-group">
     <label for="cwd">Working Directory</label>
@@ -57,9 +57,9 @@
   {/if}
   
   <div class="actions">
-    <button type="button" class="secondary" onclick={onCancel} disabled={loading}>Cancel</button>
+    <button type="button" class="secondary" onclick={onCancel} disabled={loading}>CANCEL</button>
     <button type="submit" class="primary" onclick={submit} disabled={loading}>
-      {loading ? 'Launching...' : 'Launch'}
+      {loading ? 'LAUNCHING...' : 'LAUNCH'}
     </button>
   </div>
 </div>
@@ -68,7 +68,7 @@
   .form {
     background: #161b22;
     border: 1px solid #30363d;
-    border-radius: 8px;
+    border-radius: 0;
     padding: 24px;
     display: flex;
     flex-direction: column;
@@ -100,7 +100,7 @@
     border: 1px solid #30363d;
     color: #c9d1d9;
     padding: 8px 12px;
-    border-radius: 6px;
+    border-radius: 0;
     font-size: 1rem;
     outline: none;
   }
@@ -123,7 +123,7 @@
   
   button {
     padding: 6px 16px;
-    border-radius: 6px;
+    border-radius: 0;
     font-weight: 500;
     cursor: pointer;
     border: 1px solid rgba(240,246,252,0.1);

@@ -99,7 +99,7 @@
     background: var(--bg-surface, #161b22);
     border: 1px solid var(--border-default, #30363d);
     color: var(--text-primary, #e6edf3);
-    border-radius: 6px;
+    border-radius: 0;
     font-family: inherit;
     box-sizing: border-box;
   }
@@ -119,7 +119,7 @@
     list-style: none;
     background: var(--bg-surface, #161b22);
     border: 1px solid var(--border-default, #30363d);
-    border-radius: 6px;
+    border-radius: 0;
     box-shadow: 0 4px 12px rgba(0,0,0,0.5);
     z-index: 1000;
     max-height: 200px;

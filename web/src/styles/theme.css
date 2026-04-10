@@ -46,9 +46,9 @@
   --space-8: 2rem;
 
   /* Radius */
-  --radius-sm: 3px;
-  --radius-md: 6px;
-  --radius-lg: 8px;
+  --radius-sm: 0px;
+  --radius-md: 0px;
+  --radius-lg: 0px;
 
   /* Transitions */
   --transition-fast: 100ms ease;
@@ -111,7 +111,7 @@ body {
 }
 ::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
-  border-radius: 3px;
+  border-radius: 0;
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--bg-overlay);
