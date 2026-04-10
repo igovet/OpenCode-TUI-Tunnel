@@ -95,6 +95,9 @@ export class TerminalManager {
   private _handleVisibilityChange?: () => void;
   private _xtermTextarea: HTMLTextAreaElement | null = null;
   private _originalTextareaFocus: (() => void) | null = null;
+  private _selectionChangeDisposable: { dispose(): void } | null = null;
+  private _copyListener: ((event: ClipboardEvent) => void) | null = null;
+  private selectedText = '';
   private lastAttentionClearAt = 0;
   _webglAddon?: import('@xterm/addon-webgl').WebglAddon;
 
@@ -131,6 +134,19 @@ export class TerminalManager {
     this.terminal.loadAddon(this.fitAddon);
 
     this.terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
+      const isCopyShortcut =
+        e.type === 'keydown' &&
+        !e.altKey &&
+        !e.shiftKey &&
+        (e.key === 'c' || e.key === 'C') &&
+        (e.ctrlKey || e.metaKey);
+
+      if (isCopyShortcut && this.terminal.hasSelection()) {
+        e.preventDefault();
+        void this.copySelectionToClipboard();
+        return false;
+      }
+
       // Alt+Arrow: virtual display switching
       if (
         e.altKey &&
@@ -163,6 +179,10 @@ export class TerminalManager {
         return false;
       }
       return true;
+    });
+
+    this._selectionChangeDisposable = this.terminal.onSelectionChange(() => {
+      this.selectedText = this.terminal.getSelection();
     });
 
     this.terminal.onData((data) => this.onData(data));
@@ -242,6 +262,53 @@ export class TerminalManager {
     document.addEventListener('visibilitychange', visibilityHandler);
 
     this.setupTouchScroll(this.element);
+
+    this._copyListener = (event: ClipboardEvent) => {
+      this.handleCopyEvent(event);
+    };
+    this.element.addEventListener('copy', this._copyListener);
+  }
+
+  private handleCopyEvent(event: ClipboardEvent): void {
+    if (!this.terminal.hasSelection()) {
+      return;
+    }
+
+    const text = this.selectedText || this.terminal.getSelection();
+    if (!text) {
+      return;
+    }
+
+    event.preventDefault();
+
+    if (event.clipboardData) {
+      event.clipboardData.setData('text/plain', text);
+      return;
+    }
+
+    void this.writeClipboardText(text);
+  }
+
+  private async copySelectionToClipboard(): Promise<void> {
+    const text = this.selectedText || this.terminal.getSelection();
+    if (!text) {
+      return;
+    }
+
+    await this.writeClipboardText(text);
+  }
+
+  private async writeClipboardText(text: string): Promise<void> {
+    if (!navigator.clipboard?.writeText) {
+      console.warn('Clipboard API unavailable; unable to copy terminal selection');
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (error) {
+      console.warn('Failed to copy terminal selection to clipboard', error);
+    }
   }
 
   private setupTouchScroll(element: HTMLElement): void {
@@ -692,6 +759,16 @@ export class TerminalManager {
     this.touchElement = null;
     this.touchStartListener = null;
     this.touchMoveListener = null;
+
+    if (this._selectionChangeDisposable) {
+      this._selectionChangeDisposable.dispose();
+      this._selectionChangeDisposable = null;
+    }
+
+    if (this._copyListener) {
+      this.element.removeEventListener('copy', this._copyListener);
+      this._copyListener = null;
+    }
 
     this.disconnect();
     this.terminal.dispose();

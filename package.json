@@ -5,7 +5,7 @@
     "email": "igovet@gmail.com",
     "url": "https://vetrov.dev"
   },
-  "version": "0.1.6",
+  "version": "0.1.7",
   "description": "Web terminal multiplexer for opencode TUI sessions — access your opencode processes from any browser",
   "keywords": [
     "opencode",
