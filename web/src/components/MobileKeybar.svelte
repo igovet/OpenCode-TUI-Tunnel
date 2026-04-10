@@ -429,7 +429,7 @@
   .key {
     background: #2a2a2a;
     border: 1px solid #444;
-    border-radius: 4px;
+    border-radius: 0;
     color: #ccc;
     font-family: 'JetBrains Mono', monospace;
     font-size: 11px;

@@ -83,7 +83,7 @@
   .modal-box {
     background: var(--bg-surface);
     border: 1px solid var(--border-accent);
-    border-radius: var(--radius-md);
+    border-radius: 0;
     padding: var(--space-6);
     max-width: 420px;
     width: 100%;
@@ -149,7 +149,7 @@
   .toggle-btn {
     background: var(--bg-base);
     border: 1px solid var(--border-default);
-    border-radius: var(--radius-sm);
+    border-radius: 0;
     color: var(--text-muted);
     font-family: var(--font-mono);
     font-size: var(--font-size-xs);
@@ -191,7 +191,7 @@
     justify-content: center;
     gap: var(--space-2);
     padding: var(--space-2) var(--space-4);
-    border-radius: var(--radius-sm);
+    border-radius: 0;
     font-family: var(--font-mono);
     font-size: var(--font-size-sm);
     font-weight: 600;

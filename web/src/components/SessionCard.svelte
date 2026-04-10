@@ -2,7 +2,7 @@
   import type { SessionInfo } from '../lib/types'
   import StatusBadge from './StatusBadge.svelte'
   
-  let { session, onConnect }: { session: SessionInfo, onConnect: (id: string) => void } = $props()
+  let { session, onConnect, onKill }: { session: SessionInfo, onConnect: (id: string) => void, onKill: (id: string) => void } = $props()
   
   function getBasename(path: string) {
     return path.split('/').pop() || path
@@ -33,8 +33,11 @@
   </div>
   
   <div class="actions">
+    <button class="btn kill-btn" onclick={() => onKill(session.id)} disabled={session.status === 'exited' || session.status === 'failed'}>
+      KILL
+    </button>
     <button class="btn primary" onclick={() => onConnect(session.id)} disabled={session.status === 'exited' || session.status === 'failed'}>
-      [ CONNECT ]
+      CONNECT
     </button>
   </div>
 </div>
@@ -43,7 +46,7 @@
   .terminal-card {
     background: var(--bg-elevated);
     border: 1px solid var(--border-default);
-    border-radius: var(--radius-sm);
+    border-radius: 0;
     padding: var(--space-3);
     display: flex;
     flex-direction: column;
@@ -116,8 +119,32 @@
   
   .actions {
     display: flex;
+    align-items: center;
+    gap: var(--space-2);
     justify-content: flex-end;
     margin-top: var(--space-1);
+  }
+
+  .kill-btn {
+    background: transparent;
+    border: 1px solid #553333;
+    color: #aa5555;
+    font-size: var(--font-size-xs);
+    padding: var(--space-1) var(--space-3);
+    border-radius: 0;
+    cursor: pointer;
+    letter-spacing: 1px;
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
+  .kill-btn:hover {
+    background: #3a1111;
+  }
+
+  .kill-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
   
   .btn.primary {
