@@ -2,26 +2,20 @@
   import TerminalGrid from '../components/TerminalGrid.svelte';
   import MobileKeybar from '../components/MobileKeybar.svelte';
   import { activeTerminalRef } from '../lib/activeTerminal';
+  import { observeMobileTouchViewport } from '../lib/device';
   import { get } from 'svelte/store';
   
   let { headerHeight = 40 } = $props<{ headerHeight?: number }>();
 
   // Reactive active tab
-  // Hide keybar on desktop (viewport >= 900px or when pointer: fine / non-coarse pointer)
-  let isMobile = $state(true);
+  // Show keybar only on compact coarse-pointer viewports.
+  let isMobile = $state(false);
   
   $effect(() => {
-    const checkMobile = () => {
-      // isMobile if width < 900 AND it's a coarse pointer device
-      // Actually, if it's fine pointer, hide it. If it's >= 900px, hide it.
-      const isDesktopWidth = window.innerWidth >= 900;
-      const isFinePointer = window.matchMedia('(pointer: fine)').matches;
-      isMobile = !(isDesktopWidth || isFinePointer);
-    };
-    
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
+    if (typeof window === 'undefined') return;
+    return observeMobileTouchViewport(window, (nextIsMobile) => {
+      isMobile = nextIsMobile;
+    });
   });
 
   let vpHeight = $state(typeof window !== 'undefined' ? (window.visualViewport?.height ?? window.innerHeight) : 800);

@@ -50,6 +50,7 @@ async function runStartup(): Promise<void> {
 
 export async function runForegroundServer(options: ForegroundRunnerOptions): Promise<void> {
   const { config, mode, startupToken } = options;
+  let ownedStateFiles = false;
 
   try {
     await runStartup();
@@ -69,6 +70,7 @@ export async function runForegroundServer(options: ForegroundRunnerOptions): Pro
       startedAt: new Date().toISOString(),
       version: resolvePackageVersion(),
     });
+    ownedStateFiles = true;
 
     if (startupToken) {
       writeStartupReady(startupToken, {
@@ -79,7 +81,10 @@ export async function runForegroundServer(options: ForegroundRunnerOptions): Pro
 
     UpdateCoordinator.scheduleIfNeeded(config);
   } catch (error) {
-    clearRuntimeStateFiles();
+    if (ownedStateFiles) {
+      clearRuntimeStateFiles();
+    }
+
     try {
       await stopServer();
     } catch {

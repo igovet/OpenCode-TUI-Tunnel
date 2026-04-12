@@ -25,6 +25,12 @@ interface OpencodeNotifyPayload {
   timestamp?: string;
 }
 
+interface TextareaFocusChangeRegistration {
+  textarea: HTMLTextAreaElement;
+  onFocus: () => void;
+  onBlur: () => void;
+}
+
 const OPENCODE_NOTIFY_TYPES: ReadonlySet<OpencodeNotifyType> = new Set([
   'permission_requested',
   'permission_resolved',
@@ -97,8 +103,14 @@ export class TerminalManager {
   private _originalTextareaFocus: (() => void) | null = null;
   private _selectionChangeDisposable: { dispose(): void } | null = null;
   private _copyListener: ((event: ClipboardEvent) => void) | null = null;
+  private _writeParsedDisposable: { dispose(): void } | null = null;
+  private _textareaFocusChangeRegistrations = new Set<TextareaFocusChangeRegistration>();
+  private _xtermViewport: HTMLElement | null = null;
+  private _xtermViewportScrollListener: (() => void) | null = null;
+  private lastViewportScrollTop = 0;
   private selectedText = '';
   private lastAttentionClearAt = 0;
+  private pinnedToBottom = false;
   _webglAddon?: import('@xterm/addon-webgl').WebglAddon;
 
   constructor(element: HTMLElement, cols: number, rows: number) {
@@ -186,6 +198,14 @@ export class TerminalManager {
     });
 
     this.terminal.onData((data) => this.onData(data));
+    this._writeParsedDisposable = this.terminal.onWriteParsed(() => {
+      if (!this.pinnedToBottom) {
+        return;
+      }
+
+      this.terminal.scrollToBottom();
+    });
+
     this.terminal.onResize((size) => {
       // Save dimensions for next session launch
       try {
@@ -210,6 +230,24 @@ export class TerminalManager {
     await document.fonts.ready;
     await document.fonts.load('14px "JetBrains Mono"');
     this.terminal.open(this.element);
+
+    const xtermViewport = this.element.querySelector<HTMLElement>('.xterm-viewport');
+    if (xtermViewport) {
+      this._xtermViewport = xtermViewport;
+      this.lastViewportScrollTop = xtermViewport.scrollTop;
+      this._xtermViewportScrollListener = () => {
+        const currentScrollTop = xtermViewport.scrollTop;
+        const userScrolledUp = currentScrollTop < this.lastViewportScrollTop;
+        this.lastViewportScrollTop = currentScrollTop;
+
+        if (userScrolledUp && !this.isViewportNearBottom()) {
+          this.pinnedToBottom = false;
+        }
+      };
+      xtermViewport.addEventListener('scroll', this._xtermViewportScrollListener, {
+        passive: true,
+      });
+    }
 
     // On touch devices: suppress automatic virtual keyboard by overriding textarea.focus().
     // The ⌨ button in MobileKeybar calls enableTextareaFocus() before focusing.
@@ -370,6 +408,7 @@ export class TerminalManager {
   connect(sessionId: string): void {
     this.exited = false;
     this.streamReady = false;
+    this.pinnedToBottom = false;
     this.sessionId = sessionId;
     this.connectWs();
   }
@@ -473,6 +512,7 @@ export class TerminalManager {
   disconnect(): void {
     this.sessionId = null;
     this.streamReady = false;
+    this.pinnedToBottom = false;
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
     }
@@ -487,8 +527,13 @@ export class TerminalManager {
       return;
     }
 
+    const shouldKeepBottomPinned = this.pinnedToBottom || this.isViewportNearBottom();
+
     try {
       this.fitAddon.fit();
+      if (shouldKeepBottomPinned) {
+        this.terminal.scrollToBottom();
+      }
       if (this._webglAddon) {
         this._webglAddon.clearTextureAtlas();
       }
@@ -539,7 +584,13 @@ export class TerminalManager {
 
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify({ type: 'input', data }));
+      this.pinnedToBottom = true;
     }
+  }
+
+  private isViewportNearBottom(thresholdLines = 2): boolean {
+    const activeBuffer = this.terminal.buffer.active;
+    return activeBuffer.baseY - activeBuffer.viewportY <= thresholdLines;
   }
 
   private clearAttentionFromUserInput(data: string): void {
@@ -713,6 +764,48 @@ export class TerminalManager {
     }
   }
 
+  onTextareaFocusChange(handler: (focused: boolean) => void): () => void {
+    const textarea = this._xtermTextarea;
+    if (!textarea) {
+      return () => {
+        // no-op: textarea not available yet
+      };
+    }
+
+    const onFocus = () => {
+      handler(true);
+    };
+    const onBlur = () => {
+      handler(false);
+    };
+
+    textarea.addEventListener('focus', onFocus);
+    textarea.addEventListener('blur', onBlur);
+
+    const registration: TextareaFocusChangeRegistration = {
+      textarea,
+      onFocus,
+      onBlur,
+    };
+    this._textareaFocusChangeRegistrations.add(registration);
+
+    return () => {
+      if (!this._textareaFocusChangeRegistrations.delete(registration)) {
+        return;
+      }
+      textarea.removeEventListener('focus', onFocus);
+      textarea.removeEventListener('blur', onBlur);
+    };
+  }
+
+  private cleanupTextareaFocusChangeRegistrations(): void {
+    for (const registration of this._textareaFocusChangeRegistrations) {
+      registration.textarea.removeEventListener('focus', registration.onFocus);
+      registration.textarea.removeEventListener('blur', registration.onBlur);
+    }
+    this._textareaFocusChangeRegistrations.clear();
+  }
+
   dispose(): void {
     if (this._handleFocusRefresh) {
       window.removeEventListener('focus', this._handleFocusRefresh);
@@ -723,6 +816,8 @@ export class TerminalManager {
     if (this._handleVisibilityChange) {
       document.removeEventListener('visibilitychange', this._handleVisibilityChange);
     }
+
+    this.cleanupTextareaFocusChangeRegistrations();
 
     // Restore textarea focus method if overridden
     if (this._xtermTextarea && this._originalTextareaFocus) {
@@ -768,6 +863,17 @@ export class TerminalManager {
     if (this._copyListener) {
       this.element.removeEventListener('copy', this._copyListener);
       this._copyListener = null;
+    }
+
+    if (this._xtermViewport && this._xtermViewportScrollListener) {
+      this._xtermViewport.removeEventListener('scroll', this._xtermViewportScrollListener);
+      this._xtermViewportScrollListener = null;
+      this._xtermViewport = null;
+    }
+
+    if (this._writeParsedDisposable) {
+      this._writeParsedDisposable.dispose();
+      this._writeParsedDisposable = null;
     }
 
     this.disconnect();
