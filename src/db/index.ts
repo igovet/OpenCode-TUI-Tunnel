@@ -31,6 +31,13 @@ export interface ProjectHistoryRecord {
   session_count: number;
 }
 
+export interface PushSubscriptionRow {
+  id: number;
+  endpoint: string;
+  keys: string;
+  created_at: number;
+}
+
 const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS app_state (
   key TEXT PRIMARY KEY,
@@ -77,6 +84,13 @@ CREATE TABLE IF NOT EXISTS project_history (
   path TEXT PRIMARY KEY,
   last_used_at TEXT NOT NULL,
   session_count INTEGER NOT NULL DEFAULT 1
+);
+
+CREATE TABLE IF NOT EXISTS push_subscriptions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  endpoint TEXT NOT NULL UNIQUE,
+  keys TEXT NOT NULL,
+  created_at INTEGER NOT NULL
 );
 `;
 
@@ -238,4 +252,40 @@ export function listProjectHistory(db: Database, limit = 20): ProjectHistoryReco
       `,
     )
     .all(normalizedLimit) as ProjectHistoryRecord[];
+}
+
+export function upsertPushSubscription(
+  db: Database,
+  endpoint: string,
+  keys: string,
+  createdAt: number,
+): void {
+  db.prepare(
+    `
+      INSERT INTO push_subscriptions (
+        endpoint,
+        keys,
+        created_at
+      ) VALUES (?, ?, ?)
+      ON CONFLICT(endpoint) DO UPDATE SET
+        keys = excluded.keys,
+        created_at = excluded.created_at
+    `,
+  ).run(endpoint, keys, createdAt);
+}
+
+export function removePushSubscriptionByEndpoint(db: Database, endpoint: string): void {
+  db.prepare('DELETE FROM push_subscriptions WHERE endpoint = ?').run(endpoint);
+}
+
+export function listPushSubscriptions(db: Database): PushSubscriptionRow[] {
+  return db
+    .prepare(
+      `
+        SELECT id, endpoint, keys, created_at
+        FROM push_subscriptions
+        ORDER BY created_at DESC, id DESC
+      `,
+    )
+    .all() as PushSubscriptionRow[];
 }

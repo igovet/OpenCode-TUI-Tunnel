@@ -1,20 +1,37 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick } from 'svelte';
-  import { TerminalManager, refreshAllManagers } from '../lib/terminal';
+  import { tick } from 'svelte';
+  import { get } from 'svelte/store';
+  import {
+    TerminalManager,
+    refreshAllManagers,
+    type TerminalConnectionStatus,
+  } from '../lib/terminal';
   import { workspace, isTerminalTabEnded } from '../lib/workspace';
   import { activeTerminalWrite, activeTerminalRef } from '../lib/activeTerminal';
   import { zoomState, setZoom, registerManager } from '../lib/zoomStore.svelte';
 
-  let { sessionId, isActive, showBorder = false } = $props<{ sessionId: string, isActive: boolean, showBorder?: boolean }>();
+  let {
+    sessionId,
+    isActive,
+    showBorder = false,
+  } = $props<{ sessionId: string; isActive: boolean; showBorder?: boolean }>();
 
   let container: HTMLElement;
-  let manager: TerminalManager | null = null;
+  let manager = $state<TerminalManager | null>(null);
   let terminalActive = $state(false);
-  let unregisterManager: (() => void) | null = null;
   let containerReady = $state(false);
+  let connectionStatus = $state<TerminalConnectionStatus>('disconnected');
 
   let tab = $derived($workspace.tabs.find((t) => t.sessionId === sessionId));
   let tabEnded = $derived(tab ? isTerminalTabEnded(tab.status) : false);
+  let showConnectionStatus = $derived(
+    containerReady &&
+      !tabEnded &&
+      (connectionStatus === 'disconnected' || connectionStatus === 'reconnecting'),
+  );
+  let connectionStatusText = $derived(
+    connectionStatus === 'reconnecting' ? 'Reconnection...' : 'Connection...',
+  );
 
   let resizeTimer: ReturnType<typeof setTimeout> | null = null;
   let ongoingResizeObserver: ResizeObserver | null = null;
@@ -90,13 +107,17 @@
     }
   });
 
-  onMount(() => {
-    manager = new TerminalManager(container, 80, 24);
+  $effect(() => {
+    if (!container) {
+      return;
+    }
 
-    unregisterManager = registerManager(manager);
-    // NOTE: connect() is called AFTER open() — see initialRo below
-    
-    manager.onExit((code) => {
+    let disposed = false;
+    const localManager = new TerminalManager(container, 80, 24);
+    manager = localManager;
+
+    const unregisterManager = registerManager(localManager);
+    localManager.onExit((code) => {
       workspace.updateTabStatus(sessionId, code === 0 ? 'exited' : 'failed');
     });
 
@@ -107,23 +128,22 @@
       if (!opened && width > 0 && height > 0) {
         opened = true;
         (async () => {
-          // Step 1: mark container ready so Svelte removes placeholder + opacity becomes 1
           containerReady = true;
-          console.log('[TerminalPane] containerReady set, waiting for tick...');
-
-          // Step 2: wait for Svelte DOM flush before open/fit/connect
           await tick();
-          console.log('[TerminalPane] tick done, calling open()...');
 
-          if (!manager) return;
-          await manager.open();
-          console.log('[TerminalPane] open() done');
+          if (disposed) {
+            return;
+          }
+
+          await localManager.open();
+
+          if (disposed) {
+            return;
+          }
 
           try {
-            // Brief delay to ensure xterm metrics/canvas settle before first fit.
             await new Promise((resolve) => setTimeout(resolve, 100));
-            manager.fitAddon.fit();
-            console.log('[TerminalPane] fit() done, cols:', manager.terminal.cols, 'rows:', manager.terminal.rows);
+            localManager.fitAddon.fit();
           } catch {
             // intentional
           }
@@ -131,50 +151,68 @@
           initialRo.disconnect();
           setupResizeObserver(container);
 
-          // Step 3: connect AFTER terminal is open and rendered
-          if (!tabEnded) {
-            manager.connect(sessionId);
-            console.log('[TerminalPane] connect() called for', sessionId);
+          const activeTab = get(workspace).tabs.find((candidate) => candidate.sessionId === sessionId);
+          const isEnded = activeTab ? isTerminalTabEnded(activeTab.status) : false;
+
+          if (!isEnded) {
+            localManager.connect(sessionId);
           } else {
-            manager.terminal.writeln('\r\n\x1b[33mSession ended\x1b[0m');
+            localManager.terminal.writeln('\r\n\x1b[33mSession ended\x1b[0m');
           }
 
           if (isActive) {
             if (!window.matchMedia('(pointer: coarse)').matches) {
-              manager.terminal.focus();
+              localManager.terminal.focus();
             }
-            activeTerminalWrite.set((data) => manager!.onData(data));
-            activeTerminalRef.set(manager);
+            activeTerminalWrite.set((data) => localManager.onData(data));
+            activeTerminalRef.set(localManager);
+            refreshAllManagers();
           }
         })();
       }
     });
+
     initialRo.observe(container);
 
     return () => {
+      disposed = true;
       initialRo.disconnect();
+
       if (ongoingResizeObserver) {
         ongoingResizeObserver.disconnect();
+        ongoingResizeObserver = null;
       }
-      if (resizeTimer) clearTimeout(resizeTimer);
+
+      if (resizeTimer) {
+        clearTimeout(resizeTimer);
+        resizeTimer = null;
+      }
+
+      unregisterManager();
+
+      if (get(activeTerminalRef) === localManager) {
+        activeTerminalWrite.set(null);
+        activeTerminalRef.set(null);
+      }
+
+      localManager.dispose();
+      if (manager === localManager) {
+        manager = null;
+      }
+      containerReady = false;
+      connectionStatus = 'disconnected';
     };
   });
 
-  onDestroy(() => {
-    if (unregisterManager) {
-      unregisterManager();
+  $effect(() => {
+    if (!manager) {
+      connectionStatus = 'disconnected';
+      return;
     }
-    if (isActive) {
-      activeTerminalWrite.set(null); activeTerminalRef.set(null);
-    }
-    if (manager) {
-      manager.dispose();
-      manager = null;
-    }
-    if (ongoingResizeObserver) {
-      ongoingResizeObserver.disconnect();
-    }
-    if (resizeTimer) clearTimeout(resizeTimer);
+
+    return manager.onConnectionStatusChange((status) => {
+      connectionStatus = status;
+    });
   });
 
   function handleClick(event: MouseEvent) {
@@ -229,6 +267,9 @@
   {/if}
   {#if !containerReady}
     <div class="terminal-placeholder"></div>
+  {/if}
+  {#if showConnectionStatus}
+    <div class="connection-status" aria-live="polite">{connectionStatusText}</div>
   {/if}
   <div class="terminal-container" bind:this={container} style="opacity: {containerReady ? 1 : 0}"></div>
 </div>
@@ -320,6 +361,24 @@
     align-items: center;
     justify-content: center;
     max-width: 100%;
+  }
+
+  .connection-status {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9;
+    pointer-events: none;
+    font-size: 12px;
+    line-height: 1;
+    background: color-mix(in srgb, #0d1117 55%, transparent);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
   }
 
   :global(.terminal-pane .xterm-screen canvas) {

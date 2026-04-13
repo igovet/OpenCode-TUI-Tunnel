@@ -1,6 +1,10 @@
 <script lang="ts">
   import { getSettings, setSettings } from '../lib/settings';
-  import { ensureNotificationPermission } from '../lib/notifications';
+  import {
+    ensureNotificationPermission,
+    subscribeToPushNotifications,
+    unsubscribeFromPushNotifications,
+  } from '../lib/notifications';
 
   let { open, onClose }: { open: boolean; onClose: () => void } = $props();
 
@@ -12,6 +16,13 @@
       if (!granted) {
         return;
       }
+
+      const subscribed = await subscribeToPushNotifications();
+      if (!subscribed) {
+        return;
+      }
+    } else {
+      await unsubscribeFromPushNotifications();
     }
 
     settings = { ...settings, notificationsEnabled: !settings.notificationsEnabled };

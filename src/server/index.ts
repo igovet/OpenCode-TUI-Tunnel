@@ -14,14 +14,23 @@ import {
   type Database,
   findManagedSessionByTmuxSessionName,
   insertSession,
+  removePushSubscriptionByEndpoint,
   listProjectHistory,
   logEvent,
   openDb,
+  upsertPushSubscription,
   upsertProjectHistory,
 } from '../db/index.js';
 import { suggestPaths } from './fs-suggest.js';
 import { SessionSupervisor, type SessionInfo } from '../session/index.js';
 import { attachToTmuxSession, listAllTmuxSessions, type TmuxPtyHandle } from '../tmux/adapter.js';
+import {
+  configureWebPush,
+  encodePushKeys,
+  ensureVapidConfig,
+  isValidPushSubscription,
+  sendPushNotification,
+} from './push.js';
 
 interface RuntimeState {
   app: FastifyInstance;
@@ -234,6 +243,46 @@ function setupRoutes(
     }
   };
 
+  const mapPushMessage = (
+    payload: OpencodeNotifyPayload,
+  ): { title: string; body: string } | null => {
+    switch (payload.type) {
+      case 'permission_requested':
+        return {
+          title: payload.title ?? 'Permission requested',
+          body: 'OpenCode is waiting for permission input',
+        };
+      case 'question_requested':
+        return {
+          title: payload.title ?? 'Question requested',
+          body: 'OpenCode is waiting for your answer',
+        };
+      case 'dialog_finished':
+        return {
+          title: payload.title ?? 'Dialog finished',
+          body: 'OpenCode dialog is finished',
+        };
+      default:
+        return null;
+    }
+  };
+
+  const dispatchPushNotification = async (payload: OpencodeNotifyPayload): Promise<void> => {
+    const message = mapPushMessage(payload);
+    if (!message) {
+      return;
+    }
+
+    await sendPushNotification(db, message.title, message.body, {
+      sessionId: payload.sessionId,
+      projectName: payload.projectName,
+      timestamp: payload.timestamp,
+      type: payload.type,
+      permissionId: payload.permissionId,
+      questionId: payload.questionId,
+    });
+  };
+
   app.get<{ Querystring: { q?: string } }>('/api/fs/suggest', async (request) => {
     const q = typeof request.query.q === 'string' ? request.query.q : '';
     return { suggestions: suggestPaths(q, 5) };
@@ -241,6 +290,46 @@ function setupRoutes(
 
   app.get('/api/projects/history', async () => {
     return { history: listProjectHistory(db) };
+  });
+
+  app.get('/api/push/vapid-public-key', async () => {
+    return { publicKey: config.push.vapidPublicKey };
+  });
+
+  app.post<{ Body: Record<string, unknown> }>('/api/push/subscribe', async (request, reply) => {
+    const body = request.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return reply.code(400).send({ error: 'Request body must be an object' });
+    }
+
+    const rawSubscription = body.subscription;
+    if (!isValidPushSubscription(rawSubscription)) {
+      return reply.code(400).send({ error: 'Invalid push subscription payload' });
+    }
+
+    upsertPushSubscription(
+      db,
+      rawSubscription.endpoint,
+      encodePushKeys(rawSubscription),
+      Date.now(),
+    );
+
+    return reply.code(202).send({ ok: true });
+  });
+
+  app.delete<{ Body: Record<string, unknown> }>('/api/push/unsubscribe', async (request, reply) => {
+    const body = request.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return reply.code(400).send({ error: 'Request body must be an object' });
+    }
+
+    const endpoint = body.endpoint;
+    if (typeof endpoint !== 'string' || endpoint.trim().length === 0) {
+      return reply.code(400).send({ error: 'endpoint is required' });
+    }
+
+    removePushSubscriptionByEndpoint(db, endpoint);
+    return reply.code(202).send({ ok: true });
   });
 
   app.get('/api/tmux/sessions', async () => {
@@ -299,6 +388,7 @@ function setupRoutes(
     };
 
     broadcastOpencodeNotify(payload);
+    void dispatchPushNotification(payload);
     return reply.code(202).send({ ok: true });
   });
 
@@ -684,8 +774,11 @@ export async function startServer(config: AppConfig): Promise<ServerStartInfo> {
     throw new Error('Server is already running');
   }
 
+  const resolvedConfig = ensureVapidConfig(config);
+  configureWebPush(resolvedConfig);
+
   const db = openDb();
-  const supervisor = new SessionSupervisor(db, config);
+  const supervisor = new SessionSupervisor(db, resolvedConfig);
   await supervisor.restore();
 
   const app = Fastify({ logger: true });
@@ -697,8 +790,8 @@ export async function startServer(config: AppConfig): Promise<ServerStartInfo> {
     wildcard: false,
   });
 
-  addCorsForNetworkMode(app, config);
-  setupRoutes(app, db, supervisor, config);
+  addCorsForNetworkMode(app, resolvedConfig);
+  setupRoutes(app, db, supervisor, resolvedConfig);
 
   const address = await app.listen({
     host: config.server.host,

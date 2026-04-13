@@ -9,6 +9,14 @@ type ActivateSessionPayload = {
   sessionId: string;
 };
 
+interface VapidPublicKeyResponse {
+  publicKey: string;
+}
+
+interface PushUnsubscribeBody {
+  endpoint: string;
+}
+
 let notificationAudioWarningLogged = false;
 
 export function setupNotificationAudioUnlock(): void {
@@ -18,6 +26,113 @@ export function setupNotificationAudioUnlock(): void {
 
 function canUseNotifications(): boolean {
   return typeof window !== 'undefined' && typeof Notification !== 'undefined';
+}
+
+function canUsePushManager(): boolean {
+  return typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window;
+}
+
+export function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map((char) => char.charCodeAt(0)));
+}
+
+async function getServiceWorkerRegistration(): Promise<ServiceWorkerRegistration | null> {
+  if (!canUsePushManager()) {
+    return null;
+  }
+
+  try {
+    return await navigator.serviceWorker.ready;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchVapidPublicKey(): Promise<string | null> {
+  try {
+    const response = await fetch('/api/push/vapid-public-key');
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = (await response.json()) as VapidPublicKeyResponse;
+    return typeof payload.publicKey === 'string' && payload.publicKey.trim().length > 0
+      ? payload.publicKey
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function subscribeToPushNotifications(): Promise<boolean> {
+  const registration = await getServiceWorkerRegistration();
+  if (!registration) {
+    return false;
+  }
+
+  let subscription = await registration.pushManager.getSubscription();
+  if (!subscription) {
+    const publicKey = await fetchVapidPublicKey();
+    if (!publicKey) {
+      return false;
+    }
+
+    try {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+    } catch {
+      return false;
+    }
+  }
+
+  try {
+    const response = await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ subscription }),
+    });
+
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+export async function unsubscribeFromPushNotifications(): Promise<boolean> {
+  const registration = await getServiceWorkerRegistration();
+  if (!registration) {
+    return true;
+  }
+
+  const subscription = await registration.pushManager.getSubscription();
+  if (!subscription) {
+    return true;
+  }
+
+  const endpoint = subscription.endpoint;
+  const unsubscribed = await subscription.unsubscribe().catch(() => false);
+
+  try {
+    const payload: PushUnsubscribeBody = { endpoint };
+    await fetch('/api/push/unsubscribe', {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    // Best-effort cleanup on backend
+  }
+
+  return unsubscribed;
 }
 
 export function isActivateSessionPayload(payload: unknown): payload is ActivateSessionPayload {

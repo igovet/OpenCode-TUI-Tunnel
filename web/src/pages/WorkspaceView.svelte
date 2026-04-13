@@ -3,6 +3,7 @@
   import MobileKeybar from '../components/MobileKeybar.svelte';
   import { activeTerminalRef } from '../lib/activeTerminal';
   import { observeMobileTouchViewport } from '../lib/device';
+  import { terminalManagers } from '../lib/zoomStore.svelte';
   import { get } from 'svelte/store';
   
   let { headerHeight = 40 } = $props<{ headerHeight?: number }>();
@@ -33,6 +34,46 @@
     window.visualViewport.addEventListener('resize', handler);
     handler();
     return () => window.visualViewport?.removeEventListener('resize', handler);
+  });
+
+  $effect(() => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      return;
+    }
+
+    const reconnectActiveTerminal = () => {
+      const activeTerminal = get(activeTerminalRef);
+      activeTerminal?.reconnectIfDisconnected();
+      for (const manager of terminalManagers) {
+        if (manager !== activeTerminal) {
+          manager.reconnectIfDisconnected();
+        }
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        reconnectActiveTerminal();
+      }
+    };
+
+    const handlePageShow = () => {
+      reconnectActiveTerminal();
+    };
+
+    const handleFocus = () => {
+      reconnectActiveTerminal();
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pageshow', handlePageShow);
+    window.addEventListener('focus', handleFocus);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pageshow', handlePageShow);
+      window.removeEventListener('focus', handleFocus);
+    };
   });
 </script>
 
