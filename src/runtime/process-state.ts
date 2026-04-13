@@ -220,8 +220,25 @@ export function removePidFile(): void {
 }
 
 export function clearRuntimeStateFiles(): void {
-  removeRuntimeRecord();
-  removePidFile();
+  const { runtimeFilePath, pidFilePath } = getRuntimePaths();
+
+  if (!existsSync(runtimeFilePath)) {
+    // Already absent; nothing to clean up.
+  } else {
+    const runtime = readRuntimeRecord();
+    if (runtime?.pid === process.pid) {
+      removeRuntimeRecord();
+    }
+  }
+
+  if (!existsSync(pidFilePath)) {
+    // Already absent; nothing to clean up.
+  } else {
+    const pid = readPidFile();
+    if (pid === process.pid) {
+      removePidFile();
+    }
+  }
 }
 
 export function getLiveProcessState(options?: { cleanupStale?: boolean }): LiveProcessState | null {

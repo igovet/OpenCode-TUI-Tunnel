@@ -43,6 +43,20 @@
     }
   });
 
+  // Keep visual workspace page aligned with the active tab.
+  // This covers restored activeTabId from localStorage on resume.
+  $effect(() => {
+    if (maxPanes <= 0 || !activeSessionId) return;
+
+    const activeTabIdx = tabs.findIndex((tab) => tab.sessionId === activeSessionId);
+    if (activeTabIdx === -1) return;
+
+    const targetPage = Math.floor(activeTabIdx / maxPanes);
+    if (targetPage !== $workspacePage && targetPage < totalPages) {
+      workspacePage.set(targetPage);
+    }
+  });
+
   let visiblePanes = $derived(
     containerWidth < 900
       ? tabs.filter(t => t.sessionId === activeSessionId)

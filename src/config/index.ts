@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -42,6 +42,11 @@ export interface AppConfig {
     autoApply: boolean;
     checkTimeoutMs: number;
     installTimeoutMs: number;
+  };
+  push: {
+    vapidSubject: string;
+    vapidPublicKey: string;
+    vapidPrivateKey: string;
   };
 }
 
@@ -120,6 +125,11 @@ export function getDefaultConfig(): AppConfig {
       checkTimeoutMs: 1200,
       installTimeoutMs: 300000,
     },
+    push: {
+      vapidSubject: 'mailto:admin@localhost',
+      vapidPublicKey: '',
+      vapidPrivateKey: '',
+    },
   };
 }
 
@@ -145,6 +155,12 @@ export function loadConfig(): AppConfig {
   }
 
   try {
+    chmodSync(configPath, 0o600);
+  } catch {
+    // Best-effort hardening for pre-existing configs.
+  }
+
+  try {
     const raw = readFileSync(configPath, 'utf8');
     const parsed = JSON.parse(raw) as unknown;
 
@@ -160,5 +176,8 @@ export function saveConfig(cfg: AppConfig): void {
   const configPath = getConfigPath();
   const normalized = mergeDefaults(getDefaultConfig(), cfg);
 
-  writeFileSync(configPath, `${JSON.stringify(normalized, null, 2)}\n`, 'utf8');
+  writeFileSync(configPath, `${JSON.stringify(normalized, null, 2)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600,
+  });
 }

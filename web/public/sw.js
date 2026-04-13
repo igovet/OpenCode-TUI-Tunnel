@@ -68,6 +68,40 @@ self.addEventListener('fetch', (event) => {
   );
 });
 
+self.addEventListener('push', (event) => {
+  if (!event.data) {
+    return;
+  }
+
+  let payload;
+  try {
+    payload = event.data.json();
+  } catch {
+    return;
+  }
+
+  const { title, body, data } = payload;
+  const projectName =
+    data && typeof data.projectName === 'string' && data.projectName.trim().length > 0
+      ? data.projectName.trim()
+      : null;
+  const normalizedTitle =
+    typeof title === 'string' && title.trim().length > 0 ? title.trim() : 'OpenCode notification';
+  const titleWithProject =
+    projectName && !normalizedTitle.startsWith(`${projectName}:`)
+      ? `${projectName}: ${normalizedTitle}`
+      : normalizedTitle;
+
+  event.waitUntil(
+    self.registration.showNotification(titleWithProject, {
+      body,
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      data,
+    }),
+  );
+});
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 

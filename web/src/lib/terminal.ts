@@ -25,6 +25,24 @@ interface OpencodeNotifyPayload {
   timestamp?: string;
 }
 
+export type TerminalConnectionStatus = 'connected' | 'reconnecting' | 'disconnected';
+
+interface TextareaFocusChangeRegistration {
+  textarea: HTMLTextAreaElement;
+  onFocus: () => void;
+  onBlur: () => void;
+}
+
+interface TextareaInputRegistration {
+  textarea: HTMLTextAreaElement | null;
+  listener: (e: Event) => void;
+}
+
+interface InputTransformState {
+  transform: (data: string) => string;
+  timeoutId: number;
+}
+
 const OPENCODE_NOTIFY_TYPES: ReadonlySet<OpencodeNotifyType> = new Set([
   'permission_requested',
   'permission_resolved',
@@ -76,7 +94,11 @@ export function refreshAllManagers() {
 export class TerminalManager {
   terminal: Terminal;
   fitAddon: FitAddon;
+  private customKeyEventHandler: ((event: KeyboardEvent) => boolean) | null = null;
   private ws: WebSocket | null = null;
+  private connectionStatus: TerminalConnectionStatus = 'disconnected';
+  private connectionStatusListeners = new Set<(status: TerminalConnectionStatus) => void>();
+  private hasConnectedOnce = false;
   private onExitCb?: (code: number) => void;
   private sessionId: string | null = null;
   element: HTMLElement;
@@ -97,8 +119,16 @@ export class TerminalManager {
   private _originalTextareaFocus: (() => void) | null = null;
   private _selectionChangeDisposable: { dispose(): void } | null = null;
   private _copyListener: ((event: ClipboardEvent) => void) | null = null;
+  private _writeParsedDisposable: { dispose(): void } | null = null;
+  private _textareaFocusChangeRegistrations = new Set<TextareaFocusChangeRegistration>();
+  private _textareaInputRegistrations = new Set<TextareaInputRegistration>();
+  private _xtermViewport: HTMLElement | null = null;
+  private _xtermViewportScrollListener: (() => void) | null = null;
+  private lastViewportScrollTop = 0;
   private selectedText = '';
   private lastAttentionClearAt = 0;
+  private pinnedToBottom = false;
+  private inputTransform: InputTransformState | null = null;
   _webglAddon?: import('@xterm/addon-webgl').WebglAddon;
 
   constructor(element: HTMLElement, cols: number, rows: number) {
@@ -133,52 +163,12 @@ export class TerminalManager {
     this.fitAddon = new FitAddon();
     this.terminal.loadAddon(this.fitAddon);
 
-    this.terminal.attachCustomKeyEventHandler((e: KeyboardEvent) => {
-      const isCopyShortcut =
-        e.type === 'keydown' &&
-        !e.altKey &&
-        !e.shiftKey &&
-        (e.key === 'c' || e.key === 'C') &&
-        (e.ctrlKey || e.metaKey);
-
-      if (isCopyShortcut && this.terminal.hasSelection()) {
-        e.preventDefault();
-        void this.copySelectionToClipboard();
+    this.terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      if (this.customKeyEventHandler && !this.customKeyEventHandler(event)) {
         return false;
       }
 
-      // Alt+Arrow: virtual display switching
-      if (
-        e.altKey &&
-        !e.ctrlKey &&
-        !e.shiftKey &&
-        !e.metaKey &&
-        (e.key === 'ArrowLeft' || e.key === 'ArrowRight') &&
-        e.type === 'keydown'
-      ) {
-        // Re-dispatch on document so TerminalGrid's svelte:window handler fires
-        document.dispatchEvent(
-          new KeyboardEvent('keydown', {
-            key: e.key,
-            altKey: true,
-            bubbles: true,
-            cancelable: true,
-          }),
-        );
-        return false; // prevent xterm from processing
-      }
-      // F11: PWA fullscreen
-      if (e.key === 'F11' && e.type === 'keydown') {
-        document.dispatchEvent(
-          new KeyboardEvent('keydown', {
-            key: 'F11',
-            bubbles: true,
-            cancelable: true,
-          }),
-        );
-        return false;
-      }
-      return true;
+      return this.handleDefaultCustomKeyEvent(event);
     });
 
     this._selectionChangeDisposable = this.terminal.onSelectionChange(() => {
@@ -186,6 +176,14 @@ export class TerminalManager {
     });
 
     this.terminal.onData((data) => this.onData(data));
+    this._writeParsedDisposable = this.terminal.onWriteParsed(() => {
+      if (!this.pinnedToBottom) {
+        return;
+      }
+
+      this.terminal.scrollToBottom();
+    });
+
     this.terminal.onResize((size) => {
       // Save dimensions for next session launch
       try {
@@ -206,10 +204,86 @@ export class TerminalManager {
     });
   }
 
+  private handleDefaultCustomKeyEvent(event: KeyboardEvent): boolean {
+    const isCopyShortcut =
+      event.type === 'keydown' &&
+      !event.altKey &&
+      !event.shiftKey &&
+      (event.key === 'c' || event.key === 'C') &&
+      (event.ctrlKey || event.metaKey);
+
+    if (isCopyShortcut && this.terminal.hasSelection()) {
+      event.preventDefault();
+      void this.copySelectionToClipboard();
+      return false;
+    }
+
+    // Alt+Arrow: virtual display switching
+    if (
+      event.altKey &&
+      !event.ctrlKey &&
+      !event.shiftKey &&
+      !event.metaKey &&
+      (event.key === 'ArrowLeft' || event.key === 'ArrowRight') &&
+      event.type === 'keydown'
+    ) {
+      // Re-dispatch on document so TerminalGrid's svelte:window handler fires
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: event.key,
+          altKey: true,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      return false; // prevent xterm from processing
+    }
+
+    // F11: PWA fullscreen
+    if (event.key === 'F11' && event.type === 'keydown') {
+      document.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'F11',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      return false;
+    }
+
+    return true;
+  }
+
+  attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean): void {
+    this.customKeyEventHandler = handler;
+  }
+
+  clearCustomKeyEventHandler(): void {
+    this.customKeyEventHandler = null;
+  }
+
   async open(): Promise<void> {
     await document.fonts.ready;
     await document.fonts.load('14px "JetBrains Mono"');
     this.terminal.open(this.element);
+
+    const xtermViewport = this.element.querySelector<HTMLElement>('.xterm-viewport');
+    if (xtermViewport) {
+      this._xtermViewport = xtermViewport;
+      this.lastViewportScrollTop = xtermViewport.scrollTop;
+      this._xtermViewportScrollListener = () => {
+        const currentScrollTop = xtermViewport.scrollTop;
+        const userScrolledUp = currentScrollTop < this.lastViewportScrollTop;
+        this.lastViewportScrollTop = currentScrollTop;
+
+        if (userScrolledUp && !this.isViewportNearBottom()) {
+          this.pinnedToBottom = false;
+        }
+      };
+      xtermViewport.addEventListener('scroll', this._xtermViewportScrollListener, {
+        passive: true,
+      });
+    }
 
     // On touch devices: suppress automatic virtual keyboard by overriding textarea.focus().
     // The ⌨ button in MobileKeybar calls enableTextareaFocus() before focusing.
@@ -218,6 +292,7 @@ export class TerminalManager {
       xtermTextarea.setAttribute('inputmode', 'none');
       xtermTextarea.tabIndex = -1;
       this._xtermTextarea = xtermTextarea;
+      this.attachPendingTextareaListeners(xtermTextarea);
       if (window.matchMedia('(pointer: coarse)').matches) {
         // Save original focus and replace with no-op
         this._originalTextareaFocus = xtermTextarea.focus.bind(xtermTextarea);
@@ -370,7 +445,72 @@ export class TerminalManager {
   connect(sessionId: string): void {
     this.exited = false;
     this.streamReady = false;
+    this.pinnedToBottom = false;
+    this.hasConnectedOnce = false;
+    this.setConnectionStatus('disconnected');
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
     this.sessionId = sessionId;
+    this.connectWs();
+  }
+
+  isConnected(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  hasEstablishedConnection(): boolean {
+    return this.hasConnectedOnce;
+  }
+
+  getConnectionStatus(): TerminalConnectionStatus {
+    return this.connectionStatus;
+  }
+
+  onConnectionStatusChange(handler: (status: TerminalConnectionStatus) => void): () => void {
+    this.connectionStatusListeners.add(handler);
+    handler(this.connectionStatus);
+
+    return () => {
+      this.connectionStatusListeners.delete(handler);
+    };
+  }
+
+  reconnectIfDisconnected(): void {
+    if (!this.sessionId || this.exited) {
+      return;
+    }
+
+    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
+      return;
+    }
+
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+
+    this.attemptReconnect();
+  }
+
+  private setConnectionStatus(status: TerminalConnectionStatus): void {
+    if (this.connectionStatus === status) {
+      return;
+    }
+
+    this.connectionStatus = status;
+    for (const listener of this.connectionStatusListeners) {
+      listener(status);
+    }
+  }
+
+  private attemptReconnect(): void {
+    if (!this.sessionId || this.exited) {
+      return;
+    }
+
+    this.setConnectionStatus('reconnecting');
     this.connectWs();
   }
 
@@ -379,12 +519,18 @@ export class TerminalManager {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/api/sessions/${this.sessionId}/stream?cols=${this.terminal.cols}&rows=${this.terminal.rows}`;
 
-    this.ws = new WebSocket(wsUrl);
-    this.ws.binaryType = 'arraybuffer';
+    const socket = new WebSocket(wsUrl);
+    this.ws = socket;
+    socket.binaryType = 'arraybuffer';
 
-    this.ws.onopen = () => {
+    socket.onopen = () => {
+      if (this.ws !== socket) {
+        return;
+      }
       this.streamReady = false;
-      this.ws?.send(
+      this.hasConnectedOnce = true;
+      this.setConnectionStatus('connected');
+      socket.send(
         JSON.stringify({ type: 'hello', cols: this.terminal.cols, rows: this.terminal.rows }),
       );
       if (this.reconnectTimeout) {
@@ -393,7 +539,11 @@ export class TerminalManager {
       }
     };
 
-    this.ws.onmessage = (event) => {
+    socket.onmessage = (event) => {
+      if (this.ws !== socket) {
+        return;
+      }
+
       if (typeof event.data === 'string') {
         let msg: unknown;
         try {
@@ -440,12 +590,12 @@ export class TerminalManager {
             this.reconnectTimeout = null;
           }
           this.onExitCb?.(typed.exitCode ?? 1);
-          this.ws?.close();
+          socket.close();
         } else if (typed.type === 'error') {
           this.terminal.writeln(`\x1b[31mError: ${typed.message ?? 'unknown error'}\x1b[0m`);
           if (!this.streamReady) {
             this.markSessionEnded('Session ended', 1);
-            this.ws?.close();
+            socket.close();
           }
         }
       } else {
@@ -453,18 +603,31 @@ export class TerminalManager {
       }
     };
 
-    this.ws.onclose = () => {
+    socket.onclose = () => {
+      if (this.ws !== socket) {
+        return;
+      }
+
+      this.ws = null;
+
       if (this.sessionId && !this.streamReady && !this.exited) {
         this.markSessionEnded('Session ended', 1);
         return;
       }
 
       if (this.sessionId && !this.exited) {
-        this.reconnectTimeout = window.setTimeout(() => this.connectWs(), 2000);
+        this.setConnectionStatus('disconnected');
+        this.reconnectTimeout = window.setTimeout(() => {
+          this.reconnectTimeout = null;
+          this.attemptReconnect();
+        }, 2000);
       }
     };
 
-    this.ws.onerror = (event) => {
+    socket.onerror = (event) => {
+      if (this.ws !== socket) {
+        return;
+      }
       console.error('WebSocket error for session', this.sessionId, event);
       this.terminal.writeln('\x1b[31mWebSocket connection error\x1b[0m');
     };
@@ -473,8 +636,12 @@ export class TerminalManager {
   disconnect(): void {
     this.sessionId = null;
     this.streamReady = false;
+    this.pinnedToBottom = false;
+    this.clearInputTransform();
+    this.setConnectionStatus('disconnected');
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
     }
     if (this.ws) {
       this.ws.close();
@@ -487,8 +654,13 @@ export class TerminalManager {
       return;
     }
 
+    const shouldKeepBottomPinned = this.pinnedToBottom || this.isViewportNearBottom();
+
     try {
       this.fitAddon.fit();
+      if (shouldKeepBottomPinned) {
+        this.terminal.scrollToBottom();
+      }
       if (this._webglAddon) {
         this._webglAddon.clearTextureAtlas();
       }
@@ -535,11 +707,62 @@ export class TerminalManager {
   }
 
   onData(data: string): void {
-    this.clearAttentionFromUserInput(data);
+    const transformedData = this.applyInputTransform(data);
+    if (!transformedData) {
+      return;
+    }
+
+    this.clearAttentionFromUserInput(transformedData);
 
     if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'input', data }));
+      this.ws.send(JSON.stringify({ type: 'input', data: transformedData }));
+      this.pinnedToBottom = true;
     }
+  }
+
+  write(data: string): void {
+    this.onData(data);
+  }
+
+  setInputTransform(transform: (data: string) => string, timeout: number): void {
+    this.clearInputTransform();
+
+    const timeoutId = window.setTimeout(() => {
+      if (this.inputTransform?.timeoutId !== timeoutId) {
+        return;
+      }
+
+      this.clearInputTransform();
+    }, timeout);
+
+    this.inputTransform = {
+      transform,
+      timeoutId,
+    };
+  }
+
+  clearInputTransform(): void {
+    if (!this.inputTransform) {
+      return;
+    }
+
+    window.clearTimeout(this.inputTransform.timeoutId);
+    this.inputTransform = null;
+  }
+
+  private applyInputTransform(data: string): string {
+    if (!this.inputTransform) {
+      return data;
+    }
+
+    const { transform } = this.inputTransform;
+    this.clearInputTransform();
+    return transform(data);
+  }
+
+  private isViewportNearBottom(thresholdLines = 2): boolean {
+    const activeBuffer = this.terminal.buffer.active;
+    return activeBuffer.baseY - activeBuffer.viewportY <= thresholdLines;
   }
 
   private clearAttentionFromUserInput(data: string): void {
@@ -679,6 +902,7 @@ export class TerminalManager {
     this.exited = true;
     this.terminal.writeln(`\r\n\x1b[33m${message}\x1b[0m`);
     this.sessionId = null;
+    this.setConnectionStatus('disconnected');
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
@@ -713,6 +937,109 @@ export class TerminalManager {
     }
   }
 
+  onTextareaFocusChange(handler: (focused: boolean) => void): () => void {
+    const textarea = this._xtermTextarea;
+    if (!textarea) {
+      return () => {
+        // no-op: textarea not available yet
+      };
+    }
+
+    const onFocus = () => {
+      handler(true);
+    };
+    const onBlur = () => {
+      handler(false);
+    };
+
+    textarea.addEventListener('focus', onFocus);
+    textarea.addEventListener('blur', onBlur);
+
+    const registration: TextareaFocusChangeRegistration = {
+      textarea,
+      onFocus,
+      onBlur,
+    };
+    this._textareaFocusChangeRegistrations.add(registration);
+
+    return () => {
+      if (!this._textareaFocusChangeRegistrations.delete(registration)) {
+        return;
+      }
+      textarea.removeEventListener('focus', onFocus);
+      textarea.removeEventListener('blur', onBlur);
+    };
+  }
+
+  onTextareaInput(handler: (data: string) => void): () => void {
+    const listener = (e: Event) => {
+      const inputEvent = e as InputEvent;
+      if (inputEvent.data !== null && inputEvent.data !== undefined) {
+        handler(inputEvent.data);
+      }
+    };
+
+    const registration: TextareaInputRegistration = {
+      textarea: null,
+      listener,
+    };
+    this._textareaInputRegistrations.add(registration);
+
+    const textarea = this._xtermTextarea ?? this.terminal?.textarea ?? null;
+    if (textarea) {
+      this.attachTextareaInputRegistration(registration, textarea);
+    }
+
+    return () => {
+      if (!this._textareaInputRegistrations.delete(registration)) {
+        return;
+      }
+
+      if (registration.textarea) {
+        registration.textarea.removeEventListener('input', registration.listener);
+        registration.textarea = null;
+      }
+    };
+  }
+
+  private attachPendingTextareaListeners(textarea: HTMLTextAreaElement): void {
+    for (const registration of this._textareaInputRegistrations) {
+      this.attachTextareaInputRegistration(registration, textarea);
+    }
+  }
+
+  private attachTextareaInputRegistration(
+    registration: TextareaInputRegistration,
+    textarea: HTMLTextAreaElement,
+  ): void {
+    if (registration.textarea === textarea) {
+      return;
+    }
+
+    if (registration.textarea) {
+      registration.textarea.removeEventListener('input', registration.listener);
+    }
+
+    textarea.addEventListener('input', registration.listener);
+    registration.textarea = textarea;
+  }
+
+  private cleanupTextareaFocusChangeRegistrations(): void {
+    for (const registration of this._textareaFocusChangeRegistrations) {
+      registration.textarea.removeEventListener('focus', registration.onFocus);
+      registration.textarea.removeEventListener('blur', registration.onBlur);
+    }
+    this._textareaFocusChangeRegistrations.clear();
+  }
+
+  private cleanupTextareaInputRegistrations(): void {
+    for (const registration of this._textareaInputRegistrations) {
+      registration.textarea?.removeEventListener('input', registration.listener);
+      registration.textarea = null;
+    }
+    this._textareaInputRegistrations.clear();
+  }
+
   dispose(): void {
     if (this._handleFocusRefresh) {
       window.removeEventListener('focus', this._handleFocusRefresh);
@@ -723,6 +1050,9 @@ export class TerminalManager {
     if (this._handleVisibilityChange) {
       document.removeEventListener('visibilitychange', this._handleVisibilityChange);
     }
+
+    this.cleanupTextareaFocusChangeRegistrations();
+    this.cleanupTextareaInputRegistrations();
 
     // Restore textarea focus method if overridden
     if (this._xtermTextarea && this._originalTextareaFocus) {
@@ -769,6 +1099,19 @@ export class TerminalManager {
       this.element.removeEventListener('copy', this._copyListener);
       this._copyListener = null;
     }
+
+    if (this._xtermViewport && this._xtermViewportScrollListener) {
+      this._xtermViewport.removeEventListener('scroll', this._xtermViewportScrollListener);
+      this._xtermViewportScrollListener = null;
+      this._xtermViewport = null;
+    }
+
+    if (this._writeParsedDisposable) {
+      this._writeParsedDisposable.dispose();
+      this._writeParsedDisposable = null;
+    }
+
+    this.connectionStatusListeners.clear();
 
     this.disconnect();
     this.terminal.dispose();

@@ -1,86 +1,26 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { get } from 'svelte/store';
   import { activeTerminalRef } from '../lib/activeTerminal';
+  import type { TerminalManager } from '../lib/terminal';
+
+  type CtrlMode = 'idle' | 'ctrlSubmenuOpen' | 'awaitingCtrl';
 
   let bottomOffset = $state(0);
   let isMobile = $state(false);
-  let ctrlActive = $state(false);
   let keyboardOpen = $state(false);
-  let cancelCtrl = () => {};
-
-  function openCtrlInput() {
-    if (ctrlActive) return;
-    ctrlActive = true;
-    
-    // Create a temporary contenteditable div
-    const div = document.createElement('div');
-    div.contentEditable = 'true';
-    div.style.cssText = 'position:fixed;opacity:0;left:-9999px;top:0;width:1px;height:1px;';
-    div.autocapitalize = 'off';
-    div.setAttribute('autocorrect', 'off');
-    div.setAttribute('autocomplete', 'off');
-    div.setAttribute('spellcheck', 'false');
-    document.body.appendChild(div);
-    
-    function cleanup() {
-      ctrlActive = false;
-      div.removeEventListener('input', onInput);
-      div.removeEventListener('blur', onBlur);
-      div.removeEventListener('keydown', onKeydown);
-      if (div.parentNode) document.body.removeChild(div);
-      cancelCtrl = () => {};
-    }
-    
-    cancelCtrl = cleanup;
-    
-    function onInput() {
-      const char = (div.textContent || '')[0];
-      if (!char) return;
-      div.textContent = '';
-      
-      const charMap: Record<string, string> = {
-        'c': '\x03', 'C': '\x03',
-        'z': '\x1a', 'Z': '\x1a',
-        'd': '\x04', 'D': '\x04',
-        'l': '\x0c', 'L': '\x0c',
-        'a': '\x01', 'A': '\x01',
-        'e': '\x05', 'E': '\x05',
-        'p': '\x10', 'P': '\x10',
-        'u': '\x15', 'U': '\x15',
-      };
-      
-      const seq =
-        charMap[char] ??
-        (/^[a-zA-Z]$/.test(char)
-          ? String.fromCharCode(char.toUpperCase().charCodeAt(0) - 64)
-          : '\x1b' + char);
-      
-      sendKey(seq);
-      cleanup();
-    }
-    
-    function onBlur() {
-      cleanup();
-    }
-    
-    function onKeydown(e: KeyboardEvent) {
-      if (e.key === 'Escape' || e.key === 'Enter') {
-        e.preventDefault();
-        cleanup();
-      }
-    }
-    
-    div.addEventListener('input', onInput);
-    div.addEventListener('blur', onBlur);
-    div.addEventListener('keydown', onKeydown);
-    
-    // Focus must happen in same tick as user gesture (touchend)
-    div.focus();
-  }
+  let ctrlMode = $state<CtrlMode>('idle');
+  let arrowPadOpen = $state(false);
 
   let scrollRef = $state<HTMLElement | null>(null);
   let scrolledLeft = $state(false);
   let scrolledRight = $state(true);
+
+  let arrowTriggerRef = $state<HTMLButtonElement | null>(null);
+  let arrowOverlayLeft = $state(8);
+  let ctrlCaptureTimeout: ReturnType<typeof setTimeout> | null = null;
+  const CTRL_AWAITING_IDLE_TIMEOUT_MS = 5_000;
+  let activeTerminal = $derived($activeTerminalRef);
 
   function handleScroll() {
     if (!scrollRef) return;
@@ -88,17 +28,242 @@
     scrolledRight = Math.ceil(scrollRef.scrollLeft + scrollRef.clientWidth) < scrollRef.scrollWidth;
   }
 
+  function triggerHaptic(durationMs = 8) {
+    navigator.vibrate?.(durationMs);
+  }
+
+  function getActiveTerminal(): TerminalManager | null {
+    return get(activeTerminalRef);
+  }
+
+  function sendKey(seq: string) {
+    const terminal = getActiveTerminal();
+    terminal?.onData(seq);
+  }
+
+  function closeArrowOverlay() {
+    arrowPadOpen = false;
+  }
+
+  function clearCtrlCaptureTimeout() {
+    if (ctrlCaptureTimeout) {
+      clearTimeout(ctrlCaptureTimeout);
+      ctrlCaptureTimeout = null;
+    }
+  }
+
+  function isMobileKeyboardLikelyOpen() {
+    if (typeof window === 'undefined') return keyboardOpen;
+    if (!window.visualViewport) return keyboardOpen;
+    return keyboardOpen || window.innerHeight - window.visualViewport.height > 100;
+  }
+
+  function ensureMobileKeyboardOpen() {
+    const term = getActiveTerminal();
+    if (!term) return;
+    if (isMobileKeyboardLikelyOpen()) return;
+    term.toggleMobileKeyboard();
+  }
+
+  function clearAwaitingCtrlState() {
+    clearCtrlCaptureTimeout();
+    getActiveTerminal()?.clearInputTransform();
+  }
+
+  function setCtrlMode(nextMode: CtrlMode) {
+    if (nextMode === ctrlMode) return;
+
+    if (ctrlMode === 'awaitingCtrl') {
+      clearAwaitingCtrlState();
+    }
+
+    ctrlMode = nextMode;
+    if (ctrlMode !== 'idle') {
+      closeArrowOverlay();
+    }
+  }
+
+  function beginCtrlCapture() {
+    const term = getActiveTerminal();
+    if (!term) {
+      setCtrlMode('idle');
+      return;
+    }
+
+    term.clearInputTransform();
+    clearCtrlCaptureTimeout();
+    ctrlCaptureTimeout = setTimeout(() => {
+      if (ctrlMode !== 'awaitingCtrl') return;
+      term.clearInputTransform();
+      setCtrlMode('idle');
+    }, CTRL_AWAITING_IDLE_TIMEOUT_MS);
+
+    term.setInputTransform((data: string) => {
+      const captured = normalizeCapturedChar(data);
+      clearCtrlCaptureTimeout();
+
+      if (!captured) {
+        setCtrlMode('idle');
+        return '';
+      }
+
+      const ctrlByte = computeCtrlByteFromChar(captured);
+      if (ctrlByte) {
+        triggerHaptic();
+      }
+      setCtrlMode('idle');
+      return ctrlByte ?? '';
+    }, CTRL_AWAITING_IDLE_TIMEOUT_MS);
+
+    ensureMobileKeyboardOpen();
+    queueMicrotask(() => {
+      term.terminal.focus();
+    });
+    keyboardOpen = true;
+  }
+
+  function resetExpansionAndCaptureState() {
+    setCtrlMode('idle');
+    closeArrowOverlay();
+  }
+
+  function updateArrowOverlayPosition() {
+    if (typeof window === 'undefined' || !arrowPadOpen || !arrowTriggerRef) return;
+
+    const triggerRect = arrowTriggerRef.getBoundingClientRect();
+    const overlayWidth = 164;
+    const viewportWidth = window.innerWidth;
+    const rawLeft = triggerRect.left + triggerRect.width / 2 - overlayWidth / 2;
+    arrowOverlayLeft = Math.max(8, Math.min(rawLeft, viewportWidth - overlayWidth - 8));
+  }
+
+  function computeCtrlByteFromChar(input: string): string | null {
+    if (input.length !== 1) return null;
+
+    const lower = input.toLowerCase();
+    if (/^[a-z]$/.test(lower)) {
+      return String.fromCharCode(lower.charCodeAt(0) - 96);
+    }
+
+    if (lower === '[') return '\x1b';
+    if (lower === '\\') return '\x1c';
+    if (lower === ']') return '\x1d';
+
+    return null;
+  }
+
+  function normalizeCapturedChar(input: string | null | undefined): string | null {
+    if (!input) return null;
+    return input.slice(-1);
+  }
+
+  function handleKeyboardToggle() {
+    triggerHaptic();
+    resetExpansionAndCaptureState();
+    const term = getActiveTerminal();
+    if (term) {
+      term.toggleMobileKeyboard();
+    }
+  }
+
+  function handleSimpleInput(sequence: string) {
+    triggerHaptic();
+    resetExpansionAndCaptureState();
+    sendKey(sequence);
+  }
+
+  async function handlePaste() {
+    triggerHaptic();
+    resetExpansionAndCaptureState();
+    try {
+      const text = await navigator.clipboard.readText();
+      if (text) {
+        sendKey(text);
+      }
+    } catch (err) {
+      console.error('Failed to read clipboard', err);
+    }
+  }
+
+  function handleCtrlTriggerToggle() {
+    triggerHaptic();
+    if (ctrlMode === 'ctrlSubmenuOpen') {
+      setCtrlMode('idle');
+      return;
+    }
+    setCtrlMode('ctrlSubmenuOpen');
+  }
+
+  function handleArrowTriggerToggle() {
+    triggerHaptic();
+    setCtrlMode('idle');
+    arrowPadOpen = !arrowPadOpen;
+    if (arrowPadOpen) {
+      queueMicrotask(updateArrowOverlayPosition);
+    }
+  }
+
+  function handleHomeKey() {
+    handleArrowInput('\x1b[H', { hapticDurationMs: 30, resetExpansionState: true });
+  }
+
+  function handleEndKey() {
+    handleArrowInput('\x1b[F', { hapticDurationMs: 30, resetExpansionState: true });
+  }
+
+  function handleCtrlBack() {
+    triggerHaptic();
+    setCtrlMode('idle');
+  }
+
+  function handleCtrlAwaiting() {
+    triggerHaptic();
+    setCtrlMode('awaitingCtrl');
+    beginCtrlCapture();
+  }
+
+  function handleCtrlP() {
+    triggerHaptic();
+    sendKey('\x10');
+    setCtrlMode('idle');
+  }
+
+  function handleCtrlX() {
+    triggerHaptic(30);
+    get(activeTerminalRef)?.write('\x18');
+    ensureMobileKeyboardOpen();
+    setCtrlMode('idle');
+  }
+
+  function handleCtrlC() {
+    triggerHaptic();
+    sendKey('\x03');
+    setCtrlMode('idle');
+  }
+
+  function handleArrowInput(
+    sequence: string,
+    options?: { hapticDurationMs?: number; resetExpansionState?: boolean },
+  ) {
+    triggerHaptic(options?.hapticDurationMs);
+    if (options?.resetExpansionState) {
+      resetExpansionAndCaptureState();
+    }
+    sendKey(sequence);
+  }
+
   $effect(() => {
     if (typeof window === 'undefined') return;
-    
+
     if (scrollRef) {
       handleScroll();
       const observer = new ResizeObserver(handleScroll);
       observer.observe(scrollRef);
-      
+
       const resizeHandler = () => {
         isMobile = window.innerWidth <= 900;
         handleScroll();
+        updateArrowOverlayPosition();
       };
       window.addEventListener('resize', resizeHandler);
 
@@ -106,9 +271,12 @@
       if (window.visualViewport) {
         const vvHandler = () => {
           if (window.visualViewport) {
-            const keyboardHeight = window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
+            const keyboardHeight =
+              window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
             bottomOffset = Math.max(0, keyboardHeight);
-            keyboardOpen = (window.innerHeight - window.visualViewport.height) > 100;
+            const nextKeyboardOpen = window.innerHeight - window.visualViewport.height > 100;
+            keyboardOpen = nextKeyboardOpen;
+            updateArrowOverlayPosition();
           }
         };
         window.visualViewport.addEventListener('resize', vvHandler);
@@ -129,6 +297,7 @@
       isMobile = window.innerWidth <= 900;
       const resizeHandler = () => {
         isMobile = window.innerWidth <= 900;
+        updateArrowOverlayPosition();
       };
       window.addEventListener('resize', resizeHandler);
 
@@ -136,9 +305,12 @@
       if (window.visualViewport) {
         const vvHandler = () => {
           if (window.visualViewport) {
-            const keyboardHeight = window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
+            const keyboardHeight =
+              window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
             bottomOffset = Math.max(0, keyboardHeight);
-            keyboardOpen = (window.innerHeight - window.visualViewport.height) > 100;
+            const nextKeyboardOpen = window.innerHeight - window.visualViewport.height > 100;
+            keyboardOpen = nextKeyboardOpen;
+            updateArrowOverlayPosition();
           }
         };
         window.visualViewport.addEventListener('resize', vvHandler);
@@ -157,192 +329,229 @@
     }
   });
 
-  function sendKey(seq: string) {
-    navigator.vibrate?.(8);
-    const term = get(activeTerminalRef);
-    if (term) {
-      term.terminal.input(seq, true);
-    }
-  }
+  $effect(() => {
+    if (typeof window === 'undefined') return;
 
-  async function handlePaste() {
-    navigator.vibrate?.(8);
-    try {
-      const text = await navigator.clipboard.readText();
-      const term = get(activeTerminalRef);
-      if (term && text) {
-        for (let i = 0; i < text.length; i++) {
-          term.terminal.input(text[i], true);
-        }
+    const tm = activeTerminal;
+    if (!tm) return;
+
+    const xdataDispose = tm.terminal.onData((data) => {
+      if (data !== '\r') return;
+      if (!keyboardOpen) return;
+      if (ctrlMode !== 'idle') return;
+      untrack(() => tm.toggleMobileKeyboard());
+    });
+
+    const unsubscribeFocusChange = tm.onTextareaFocusChange((focused: boolean) => {
+      keyboardOpen = focused;
+      if (!focused) {
+        bottomOffset = 0;
+      } else if (typeof window !== 'undefined' && window.visualViewport) {
+        const viewportDelta =
+          window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
+        bottomOffset = Math.max(0, viewportDelta);
       }
-    } catch (err) {
-      console.error('Failed to read clipboard', err);
-    }
-  }
+    });
 
-  function isKeyboardOpen(): boolean {
-    if (typeof window === 'undefined' || !window.visualViewport) return false;
-    return (window.innerHeight - window.visualViewport.height) > 100;
-  }
-
-  function makeTapHandler(action: () => void) {
-    let startX = 0, startY = 0, moved = false;
-    let wasKeyboardOpen = false;
-    return {
-      touchstart: (e: TouchEvent) => {
-        e.stopPropagation();
-        startX = e.touches[0].clientX;
-        startY = e.touches[0].clientY;
-        moved = false;
-        wasKeyboardOpen = isKeyboardOpen();
-      },
-      touchmove: (e: TouchEvent) => {
-        const dx = Math.abs(e.touches[0].clientX - startX);
-        const dy = Math.abs(e.touches[0].clientY - startY);
-        if (dx > 8 || dy > 8) moved = true;
-      },
-      touchend: (e: TouchEvent) => {
-        e.stopPropagation();
-        if (!moved) {
-          e.preventDefault();
-          action();
-          // After action: if keyboard was closed before, make sure it stays closed
-          if (!wasKeyboardOpen) {
-            // Use setTimeout to run after any focus side effects
-            setTimeout(() => {
-              if (isKeyboardOpen()) {
-                // Keyboard opened unexpectedly - close it by blurring active element
-                if (document.activeElement && document.activeElement !== document.body) {
-                  (document.activeElement as HTMLElement).blur();
-                }
-              }
-            }, 50);
-          }
-        }
-      }
+    return () => {
+      unsubscribeFocusChange();
+      xdataDispose.dispose();
+      resetExpansionAndCaptureState();
     };
-  }
-
-  const keys = [
-    { seq: '\x1b[A', label: '↑', cls: 'arrow' },
-    { seq: '\x1b[B', label: '↓', cls: 'arrow' },
-    { seq: '\x1b[D', label: '↑', innerCls: 'rotate-left', cls: 'arrow' },
-    { seq: '\x1b[C', label: '↑', innerCls: 'rotate-right', cls: 'arrow' },
-    { seq: '', action: () => { const term = get(activeTerminalRef); if (term) term.terminal.scrollToTop(); }, label: 'Home' },
-    { seq: '', action: () => { const term = get(activeTerminalRef); if (term) term.terminal.scrollToBottom(); }, label: 'End' },
-    { seq: '\r', label: '⏎ Enter', cls: 'enter' },
-    { seq: '\t', label: 'Tab' },
-    { seq: '\x1b', label: 'Esc' },
-    { seq: '\x7f', label: '⌫' },
-    { seq: '\x03', label: 'Ctrl+C', cls: 'danger' },
-    { seq: '\x1a', label: 'Ctrl+Z', cls: 'danger' },
-    { seq: '\x04', label: 'Ctrl+D' },
-    { seq: '\x0c', label: 'Ctrl+L' },
-    { seq: '\x01', label: 'Ctrl+A' },
-    { seq: '\x05', label: 'Ctrl+E' },
-    { seq: '\x10', label: 'Ctrl+P' }
-  ].map(k => ({ ...k, tap: makeTapHandler(k.action || (() => sendKey(k.seq))) }));
-
-  const pasteTap = makeTapHandler(handlePaste);
-  const ctrlTap = (() => {
-    let startX = 0, startY = 0, moved = false;
-    return {
-      touchstart: (e: TouchEvent) => {
-        e.stopPropagation();
-        startX = e.touches[0].clientX;
-        startY = e.touches[0].clientY;
-        moved = false;
-      },
-      touchmove: (e: TouchEvent) => {
-        const dx = Math.abs(e.touches[0].clientX - startX);
-        const dy = Math.abs(e.touches[0].clientY - startY);
-        if (dx > 8 || dy > 8) moved = true;
-      },
-      touchend: (e: TouchEvent) => {
-        e.stopPropagation();
-        if (!moved) {
-          e.preventDefault();
-          if (ctrlActive) {
-            cancelCtrl();
-          } else {
-            openCtrlInput();
-          }
-        }
-      }
-    };
-  })();
-
-  const keyboardTap = makeTapHandler(() => {
-    const term = get(activeTerminalRef);
-    if (term) {
-      term.toggleMobileKeyboard();
-    }
   });
 
-  const nlTap = makeTapHandler(() => sendKey('\x0a'));
+  $effect(() => {
+    const mode = ctrlMode;
+    queueMicrotask(() => {
+      if (mode !== 'idle') {
+        handleScroll();
+        return;
+      }
+      handleScroll();
+    });
+  });
+
+  $effect(() => {
+    if (typeof document === 'undefined') return;
+    if (ctrlMode === 'idle' && !arrowPadOpen) return;
+
+    const onDocumentPointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+
+      const withinKeybar =
+        target instanceof Element &&
+        (target.closest('.keybar') || target.closest('[data-arrow-overlay="true"]'));
+      if (withinKeybar) return;
+
+      resetExpansionAndCaptureState();
+    };
+
+    document.addEventListener('pointerdown', onDocumentPointerDown);
+    return () => {
+      document.removeEventListener('pointerdown', onDocumentPointerDown);
+    };
+  });
+
+  $effect(() => {
+    if (!arrowPadOpen) return;
+
+    queueMicrotask(() => {
+      updateArrowOverlayPosition();
+    });
+
+    if (typeof window === 'undefined') return;
+    const onResize = () => updateArrowOverlayPosition();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  });
+
+  $effect(() => {
+    return () => {
+      resetExpansionAndCaptureState();
+    };
+  });
 </script>
 
 {#if isMobile}
-  <div 
-    class="keybar" 
-    style="bottom: {bottomOffset}px"
-    onpointerdown={(e) => e.preventDefault()}
-  >
+  <div class="keybar" style="bottom: {bottomOffset}px" onpointerdown={(e) => e.preventDefault()}>
     <div class="fixed-section">
       <button
         class="key key-keyboard {keyboardOpen ? 'kb-active' : ''}"
         tabindex="-1"
         onmousedown={(e) => e.preventDefault()}
-        ontouchstart={keyboardTap.touchstart}
-        ontouchmove={keyboardTap.touchmove}
-        ontouchend={keyboardTap.touchend}
+        onclick={handleKeyboardToggle}
       >⌨</button>
       <button
         class="key nl-btn"
         tabindex="-1"
         onmousedown={(e) => e.preventDefault()}
-        ontouchstart={nlTap.touchstart}
-        ontouchmove={nlTap.touchmove}
-        ontouchend={nlTap.touchend}
+        onclick={() => handleSimpleInput('\x0a')}
       >↵</button>
     </div>
     <div class="divider"></div>
     <div class="scroll-wrapper" class:scrolled-left={scrolledLeft} class:scrolled-right={scrolledRight}>
       <div class="scroll-section" bind:this={scrollRef} onscroll={handleScroll}>
-        <button
-        class="key {ctrlActive ? 'ctrl-active' : ''}"
-        tabindex="-1"
-        onmousedown={(e) => e.preventDefault()}
-        ontouchstart={ctrlTap.touchstart}
-        ontouchmove={ctrlTap.touchmove}
-        ontouchend={ctrlTap.touchend}
-      >Ctrl</button>
-      {#each keys as key}
-        <button
-          class="key {key.cls ?? ''}"
-          tabindex="-1"
-          onmousedown={(e) => e.preventDefault()}
-          ontouchstart={key.tap.touchstart}
-          ontouchmove={key.tap.touchmove}
-          ontouchend={key.tap.touchend}
-        >
-          {#if key.innerCls}
-            <span class={key.innerCls}>{key.label}</span>
-          {:else}
-            {key.label}
-          {/if}
-        </button>
-      {/each}
-      <button
-        class="key"
-        tabindex="-1"
-        onmousedown={(e) => e.preventDefault()}
-        ontouchstart={pasteTap.touchstart}
-        ontouchmove={pasteTap.touchmove}
-        ontouchend={pasteTap.touchend}
-      >Paste</button>
+        {#if ctrlMode !== 'idle'}
+          <button
+            class="key"
+            tabindex="-1"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={handleCtrlBack}
+          >← Back</button>
+          <button
+            class="key {ctrlMode === 'awaitingCtrl' ? 'ctrl-active' : ''}"
+            tabindex="-1"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={handleCtrlAwaiting}
+          >Ctrl</button>
+          <button
+            class="key"
+            tabindex="-1"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={handleCtrlP}
+          >Ctrl+p</button>
+          <button
+            class="key"
+            tabindex="-1"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={handleCtrlX}
+          >Ctrl+x</button>
+          <button
+            class="key"
+            tabindex="-1"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={handleCtrlC}
+          >Ctrl+c</button>
+        {:else}
+          <button
+            class="key"
+            tabindex="-1"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={handleCtrlTriggerToggle}
+          >Ctrl+</button>
+          <button
+            class="key {arrowPadOpen ? 'ctrl-active' : ''}"
+            tabindex="-1"
+            bind:this={arrowTriggerRef}
+            onmousedown={(e) => e.preventDefault()}
+            onclick={handleArrowTriggerToggle}
+          >⊞ arrows</button>
+          <button
+            class="key"
+            tabindex="-1"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={handleHomeKey}
+          >Home</button>
+          <button
+            class="key"
+            tabindex="-1"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={handleEndKey}
+          >End</button>
+          <button
+            class="key"
+            tabindex="-1"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={() => handleSimpleInput('\t')}
+          >Tab</button>
+          <button
+            class="key"
+            tabindex="-1"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={() => handleSimpleInput('\x1b')}
+          >Esc</button>
+          <button
+            class="key"
+            tabindex="-1"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={handlePaste}
+          >Paste</button>
+          <button
+            class="key enter"
+            tabindex="-1"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={() => handleSimpleInput('\r')}
+          >↵ Enter</button>
+        {/if}
       </div>
     </div>
+
+    {#if arrowPadOpen}
+      <div
+        data-arrow-overlay="true"
+        style="position: fixed; z-index: 10001; left: {arrowOverlayLeft}px; bottom: {bottomOffset + 48}px; display: flex; flex-direction: column; gap: 4px; padding: 6px; background: #1a1a1a; border: 1px solid #333; box-shadow: 0 8px 20px rgb(0 0 0 / 45%);"
+      >
+        <div style="display: flex; justify-content: center; gap: 4px;">
+          <button
+            class="key arrow"
+            tabindex="-1"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={() => handleArrowInput('\x1b[A')}
+          >↑</button>
+        </div>
+        <div style="display: flex; justify-content: center; gap: 4px;">
+          <button
+            class="key arrow"
+            tabindex="-1"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={() => handleArrowInput('\x1b[D')}
+          ><span style="display: inline-block; transform: rotate(-90deg);">↑</span></button>
+          <button
+            class="key arrow"
+            tabindex="-1"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={() => handleArrowInput('\x1b[B')}
+          ><span style="display: inline-block; transform: rotate(180deg);">↑</span></button>
+          <button
+            class="key arrow"
+            tabindex="-1"
+            onmousedown={(e) => e.preventDefault()}
+            onclick={() => handleArrowInput('\x1b[C')}
+          ><span style="display: inline-block; transform: rotate(90deg);">↑</span></button>
+        </div>
+      </div>
+    {/if}
   </div>
 {/if}
 
@@ -361,7 +570,7 @@
     background: #1a1a1a;
     border-top: 1px solid #333;
   }
-  
+
   .fixed-section {
     display: flex;
     align-items: center;
