@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { get } from 'svelte/store';
   import { activeTerminalRef } from '../lib/activeTerminal';
   import type { TerminalManager } from '../lib/terminal';
@@ -19,6 +20,7 @@
   let arrowOverlayLeft = $state(8);
   let ctrlCaptureTimeout: ReturnType<typeof setTimeout> | null = null;
   const CTRL_AWAITING_IDLE_TIMEOUT_MS = 5_000;
+  let activeTerminal = $derived($activeTerminalRef);
 
   function handleScroll() {
     if (!scrollRef) return;
@@ -330,14 +332,17 @@
   $effect(() => {
     if (typeof window === 'undefined') return;
 
-    const term = getActiveTerminal() as
-      | (ReturnType<typeof getActiveTerminal> & {
-          onTextareaFocusChange?: (listener: (focused: boolean) => void) => () => void;
-        })
-      | null;
-    if (!term?.onTextareaFocusChange) return;
+    const tm = activeTerminal;
+    if (!tm) return;
 
-    const unsubscribeFocusChange = term.onTextareaFocusChange((focused: boolean) => {
+    const xdataDispose = tm.terminal.onData((data) => {
+      if (data !== '\r') return;
+      if (!keyboardOpen) return;
+      if (ctrlMode !== 'idle') return;
+      untrack(() => tm.toggleMobileKeyboard());
+    });
+
+    const unsubscribeFocusChange = tm.onTextareaFocusChange((focused: boolean) => {
       keyboardOpen = focused;
       if (!focused) {
         bottomOffset = 0;
@@ -350,6 +355,7 @@
 
     return () => {
       unsubscribeFocusChange();
+      xdataDispose.dispose();
       resetExpansionAndCaptureState();
     };
   });

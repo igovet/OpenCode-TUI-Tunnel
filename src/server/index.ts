@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { fileURLToPath } from 'node:url';
 
@@ -123,6 +123,46 @@ function toPositiveInt(value: unknown, fallback: number): number {
   return parsed;
 }
 
+function deriveProjectNameFromWorkdir(workdir: string | null | undefined): string | undefined {
+  if (typeof workdir !== 'string' || workdir.trim().length === 0) {
+    return undefined;
+  }
+
+  const candidate = basename(workdir.trim());
+  if (!candidate || candidate === '/' || candidate === '.' || candidate === '..') {
+    return undefined;
+  }
+
+  return candidate;
+}
+
+function resolveProjectName(options: {
+  providedProjectName: unknown;
+  workdir: string | null | undefined;
+  fallbackSessionName: string | null | undefined;
+}): string {
+  if (
+    typeof options.providedProjectName === 'string' &&
+    options.providedProjectName.trim().length > 0
+  ) {
+    return options.providedProjectName.trim();
+  }
+
+  const derivedFromWorkdir = deriveProjectNameFromWorkdir(options.workdir);
+  if (derivedFromWorkdir) {
+    return derivedFromWorkdir;
+  }
+
+  if (
+    typeof options.fallbackSessionName === 'string' &&
+    options.fallbackSessionName.trim().length > 0
+  ) {
+    return options.fallbackSessionName.trim();
+  }
+
+  return 'OpenCode TUI';
+}
+
 function serializeSession(session: SessionInfo) {
   return {
     ...session,
@@ -179,28 +219,28 @@ function setupRoutes(
   supervisor: SessionSupervisor,
   config: AppConfig,
 ): void {
-  const activeStreams = new Map<string, Set<StreamSocket>>();
+  const activeSessionConnections = new Map<string, Set<StreamSocket>>();
 
   const registerStream = (sessionId: string, socket: StreamSocket): void => {
-    const set = activeStreams.get(sessionId) ?? new Set<StreamSocket>();
+    const set = activeSessionConnections.get(sessionId) ?? new Set<StreamSocket>();
     set.add(socket);
-    activeStreams.set(sessionId, set);
+    activeSessionConnections.set(sessionId, set);
   };
 
   const unregisterStream = (sessionId: string, socket: StreamSocket): void => {
-    const set = activeStreams.get(sessionId);
+    const set = activeSessionConnections.get(sessionId);
     if (!set) {
       return;
     }
 
     set.delete(socket);
     if (set.size === 0) {
-      activeStreams.delete(sessionId);
+      activeSessionConnections.delete(sessionId);
     }
   };
 
   const broadcastExit = (sessionId: string, exitCode: number): void => {
-    const set = activeStreams.get(sessionId);
+    const set = activeSessionConnections.get(sessionId);
     if (!set) {
       return;
     }
@@ -214,12 +254,12 @@ function setupRoutes(
       }
     }
 
-    activeStreams.delete(sessionId);
+    activeSessionConnections.delete(sessionId);
   };
 
   const listAllSockets = (): StreamSocket[] => {
     const all: StreamSocket[] = [];
-    for (const set of activeStreams.values()) {
+    for (const set of activeSessionConnections.values()) {
       for (const socket of set) {
         all.push(socket);
       }
@@ -273,7 +313,16 @@ function setupRoutes(
       return;
     }
 
-    await sendPushNotification(db, message.title, message.body, {
+    const projectPrefix =
+      typeof payload.projectName === 'string' && payload.projectName.trim().length > 0
+        ? `${payload.projectName.trim()}: `
+        : '';
+    const title =
+      projectPrefix.length > 0 && !message.title.startsWith(projectPrefix)
+        ? `${projectPrefix}${message.title}`
+        : message.title;
+
+    await sendPushNotification(db, title, message.body, {
       sessionId: payload.sessionId,
       projectName: payload.projectName,
       timestamp: payload.timestamp,
@@ -373,6 +422,14 @@ function setupRoutes(
         ? findManagedSessionByTmuxSessionName(db, rawTmuxSessionName)
         : null;
     const resolvedSessionId = mappedSession?.id ?? rawSessionId;
+    const resolvedSession = supervisor.get(resolvedSessionId);
+    const projectName = resolveProjectName({
+      providedProjectName: body.projectName,
+      workdir: resolvedSession?.cwd ?? mappedSession?.cwd,
+      fallbackSessionName: resolvedSession?.tmuxName ?? mappedSession?.tmux_session_name,
+    });
+    const activeViewers = activeSessionConnections.get(resolvedSessionId);
+    const hasActiveViewer = Boolean(activeViewers && activeViewers.size > 0);
 
     const payload: OpencodeNotifyPayload = {
       type: rawType as OpencodeNotifyPayload['type'],
@@ -380,7 +437,7 @@ function setupRoutes(
       opencodeSessionId:
         typeof rawOpencodeSessionId === 'string' ? rawOpencodeSessionId : undefined,
       tmuxSessionName: typeof rawTmuxSessionName === 'string' ? rawTmuxSessionName : undefined,
-      projectName: typeof body.projectName === 'string' ? body.projectName : undefined,
+      projectName,
       title: typeof body.title === 'string' ? body.title : undefined,
       permissionId: typeof body.permissionId === 'string' ? body.permissionId : null,
       questionId: typeof body.questionId === 'string' ? body.questionId : null,
@@ -388,7 +445,11 @@ function setupRoutes(
     };
 
     broadcastOpencodeNotify(payload);
-    void dispatchPushNotification(payload);
+
+    if (!hasActiveViewer) {
+      void dispatchPushNotification(payload);
+    }
+
     return reply.code(202).send({ ok: true });
   });
 

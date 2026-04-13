@@ -20,6 +20,52 @@
 - Format: `npm run format`
 - Generate icons: `npm run generate-icons`
 
+## Changelog Maintenance
+
+`CHANGELOG.md` at the project root documents all notable changes per release version using GitHub `<details>`/`<summary>` accordion blocks.
+
+### When to update CHANGELOG.md
+
+Update `CHANGELOG.md` when any of the following are implemented or fixed:
+
+- New user-facing features (UI, UX, behavior)
+- Bug fixes affecting end users
+- Infrastructure changes that affect reliability or security (e.g., PID file race conditions, push notification fixes)
+- Breaking changes or configuration changes
+
+Minor changes (refactors, internal cleanup, documentation-only) do not require changelog entries.
+
+### Format
+
+Each version uses a `<details>`/`<summary>` accordion block:
+
+```markdown
+<details open>
+<summary><strong>vX.Y.Z</strong> — YYYY-MM-DD</summary>
+
+### Category Title
+
+- Change description
+
+</details>
+```
+
+Suggested categories: `🎯 Features`, `🔧 Bug Fixes`, `🎨 UI/UX`, `📡 Infrastructure`, `⚠️ Breaking Changes`.
+
+### Who updates it
+
+- **technical-writer** agent: responsible for changelog updates at version release time
+- **During implementation**: backend-developer, frontend-developer, full-stack-developer agents should note changelog-worthy changes in their result files (in a `## Changelog Notes` section)
+- **Orchestrator**: when closing a task, delegate a changelog update to technical-writer if the task introduced user-facing changes
+
+### Adding a new version
+
+When starting a new version cycle:
+
+1. Add a new `<details open>` block at the top (before the previous version)
+2. Change the previous version's `<details open>` to `<details>` (collapsed)
+3. Fill in the date when the version is released
+
 ## Build/Dev Workflow Quirks
 
 - `tsup.config.ts` uses `clean: false` so server rebuilds do not wipe `dist/web`.

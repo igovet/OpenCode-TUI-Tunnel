@@ -52,6 +52,11 @@ Continue below for full docs:
 - [Usage](#usage)
 - [CLI Reference](#cli-reference)
 - [Cloudflare Tunnel Setup (Zero Trust Authentication)](#cloudflare-tunnel-setup-zero-trust-authentication)
+- [Changelog](#changelog)
+
+## Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md) for version history.
 
 ---
 

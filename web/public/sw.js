@@ -81,8 +81,19 @@ self.addEventListener('push', (event) => {
   }
 
   const { title, body, data } = payload;
+  const projectName =
+    data && typeof data.projectName === 'string' && data.projectName.trim().length > 0
+      ? data.projectName.trim()
+      : null;
+  const normalizedTitle =
+    typeof title === 'string' && title.trim().length > 0 ? title.trim() : 'OpenCode notification';
+  const titleWithProject =
+    projectName && !normalizedTitle.startsWith(`${projectName}:`)
+      ? `${projectName}: ${normalizedTitle}`
+      : normalizedTitle;
+
   event.waitUntil(
-    self.registration.showNotification(title, {
+    self.registration.showNotification(titleWithProject, {
       body,
       icon: '/icons/icon-192.png',
       badge: '/icons/icon-192.png',

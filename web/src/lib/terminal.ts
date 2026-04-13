@@ -33,6 +33,11 @@ interface TextareaFocusChangeRegistration {
   onBlur: () => void;
 }
 
+interface TextareaInputRegistration {
+  textarea: HTMLTextAreaElement | null;
+  listener: (e: Event) => void;
+}
+
 interface InputTransformState {
   transform: (data: string) => string;
   timeoutId: number;
@@ -116,6 +121,7 @@ export class TerminalManager {
   private _copyListener: ((event: ClipboardEvent) => void) | null = null;
   private _writeParsedDisposable: { dispose(): void } | null = null;
   private _textareaFocusChangeRegistrations = new Set<TextareaFocusChangeRegistration>();
+  private _textareaInputRegistrations = new Set<TextareaInputRegistration>();
   private _xtermViewport: HTMLElement | null = null;
   private _xtermViewportScrollListener: (() => void) | null = null;
   private lastViewportScrollTop = 0;
@@ -286,6 +292,7 @@ export class TerminalManager {
       xtermTextarea.setAttribute('inputmode', 'none');
       xtermTextarea.tabIndex = -1;
       this._xtermTextarea = xtermTextarea;
+      this.attachPendingTextareaListeners(xtermTextarea);
       if (window.matchMedia('(pointer: coarse)').matches) {
         // Save original focus and replace with no-op
         this._originalTextareaFocus = xtermTextarea.focus.bind(xtermTextarea);
@@ -964,12 +971,73 @@ export class TerminalManager {
     };
   }
 
+  onTextareaInput(handler: (data: string) => void): () => void {
+    const listener = (e: Event) => {
+      const inputEvent = e as InputEvent;
+      if (inputEvent.data !== null && inputEvent.data !== undefined) {
+        handler(inputEvent.data);
+      }
+    };
+
+    const registration: TextareaInputRegistration = {
+      textarea: null,
+      listener,
+    };
+    this._textareaInputRegistrations.add(registration);
+
+    const textarea = this._xtermTextarea ?? this.terminal?.textarea ?? null;
+    if (textarea) {
+      this.attachTextareaInputRegistration(registration, textarea);
+    }
+
+    return () => {
+      if (!this._textareaInputRegistrations.delete(registration)) {
+        return;
+      }
+
+      if (registration.textarea) {
+        registration.textarea.removeEventListener('input', registration.listener);
+        registration.textarea = null;
+      }
+    };
+  }
+
+  private attachPendingTextareaListeners(textarea: HTMLTextAreaElement): void {
+    for (const registration of this._textareaInputRegistrations) {
+      this.attachTextareaInputRegistration(registration, textarea);
+    }
+  }
+
+  private attachTextareaInputRegistration(
+    registration: TextareaInputRegistration,
+    textarea: HTMLTextAreaElement,
+  ): void {
+    if (registration.textarea === textarea) {
+      return;
+    }
+
+    if (registration.textarea) {
+      registration.textarea.removeEventListener('input', registration.listener);
+    }
+
+    textarea.addEventListener('input', registration.listener);
+    registration.textarea = textarea;
+  }
+
   private cleanupTextareaFocusChangeRegistrations(): void {
     for (const registration of this._textareaFocusChangeRegistrations) {
       registration.textarea.removeEventListener('focus', registration.onFocus);
       registration.textarea.removeEventListener('blur', registration.onBlur);
     }
     this._textareaFocusChangeRegistrations.clear();
+  }
+
+  private cleanupTextareaInputRegistrations(): void {
+    for (const registration of this._textareaInputRegistrations) {
+      registration.textarea?.removeEventListener('input', registration.listener);
+      registration.textarea = null;
+    }
+    this._textareaInputRegistrations.clear();
   }
 
   dispose(): void {
@@ -984,6 +1052,7 @@ export class TerminalManager {
     }
 
     this.cleanupTextareaFocusChangeRegistrations();
+    this.cleanupTextareaInputRegistrations();
 
     // Restore textarea focus method if overridden
     if (this._xtermTextarea && this._originalTextareaFocus) {
