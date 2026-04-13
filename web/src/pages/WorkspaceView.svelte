@@ -3,6 +3,8 @@
   import MobileKeybar from '../components/MobileKeybar.svelte';
   import { activeTerminalRef } from '../lib/activeTerminal';
   import { observeMobileTouchViewport } from '../lib/device';
+  import { getCurrentPushSubscription, subscribeToPushNotifications } from '../lib/notifications';
+  import { getSettings, setSettings } from '../lib/settings';
   import { terminalManagers } from '../lib/zoomStore.svelte';
   import { get } from 'svelte/store';
   
@@ -17,6 +19,29 @@
     return observeMobileTouchViewport(window, (nextIsMobile) => {
       isMobile = nextIsMobile;
     });
+  });
+
+  $effect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    void (async () => {
+      const settings = getSettings();
+      if (!settings.notificationsEnabled) {
+        return;
+      }
+
+      const subscription = await getCurrentPushSubscription();
+      if (subscription) {
+        return;
+      }
+
+      const subscribed = await subscribeToPushNotifications();
+      if (!subscribed) {
+        setSettings({ ...settings, notificationsEnabled: false });
+      }
+    })();
   });
 
   let vpHeight = $state(typeof window !== 'undefined' ? (window.visualViewport?.height ?? window.innerHeight) : 800);

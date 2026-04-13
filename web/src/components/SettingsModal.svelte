@@ -1,7 +1,10 @@
 <script lang="ts">
   import { getSettings, setSettings } from '../lib/settings';
   import {
-    ensureNotificationPermission,
+    getCurrentPushSubscription,
+    isIOSPWARequired,
+    isPushSupported,
+    requestNotificationPermission,
     subscribeToPushNotifications,
     unsubscribeFromPushNotifications,
   } from '../lib/notifications';
@@ -9,24 +12,123 @@
   let { open, onClose }: { open: boolean; onClose: () => void } = $props();
 
   let settings = $state(getSettings());
+  let checkingPushState = $state(true);
+  let pushError = $state('');
+  let notificationPermission = $state<BrowserNotificationPermission | null>(
+    getNotificationPermissionState(),
+  );
+
+  const NOT_SUPPORTED_ERROR = 'Браузер не поддерживает push-уведомления';
+  const PERMISSION_DENIED_ERROR = 'Разрешения на уведомления отклонены в настройках браузера';
+  const SUBSCRIBE_FAILED_ERROR = 'Ошибка подписки на уведомления';
+  const IOS_PWA_REQUIRED_ERROR =
+    'Для push-уведомлений добавьте приложение на главный экран (iOS)';
+
+  type BrowserNotificationPermission = 'default' | 'denied' | 'granted';
+
+  function getNotificationPermissionState(): BrowserNotificationPermission | null {
+    if (typeof Notification === 'undefined') {
+      return null;
+    }
+
+    return Notification.permission;
+  }
+
+  function setNotificationsEnabled(enabled: boolean): void {
+    settings = { ...settings, notificationsEnabled: enabled };
+    setSettings(settings);
+  }
+
+  async function syncNotificationToggleFromSubscription(): Promise<void> {
+    checkingPushState = true;
+    pushError = '';
+
+    notificationPermission = getNotificationPermissionState();
+
+    if (!settings.notificationsEnabled) {
+      checkingPushState = false;
+      return;
+    }
+
+    if (!isPushSupported()) {
+      pushError = NOT_SUPPORTED_ERROR;
+      setNotificationsEnabled(false);
+      checkingPushState = false;
+      return;
+    }
+
+    const subscription = await getCurrentPushSubscription();
+    if (subscription) {
+      checkingPushState = false;
+      return;
+    }
+
+    if (notificationPermission === 'denied') {
+      pushError = PERMISSION_DENIED_ERROR;
+      setNotificationsEnabled(false);
+      checkingPushState = false;
+      return;
+    }
+
+    const subscribed = await subscribeToPushNotifications();
+    notificationPermission = getNotificationPermissionState();
+
+    if (!subscribed) {
+      pushError = iosPwaRequired ? IOS_PWA_REQUIRED_ERROR : SUBSCRIBE_FAILED_ERROR;
+      setNotificationsEnabled(false);
+      checkingPushState = false;
+      return;
+    }
+
+    setNotificationsEnabled(true);
+    checkingPushState = false;
+  }
+
+  $effect(() => {
+    if (!open) {
+      return;
+    }
+
+    void syncNotificationToggleFromSubscription();
+  });
+
+  const notificationPermissionDenied = $derived(notificationPermission === 'denied');
+  const iosPwaRequired = $derived(isIOSPWARequired());
 
   async function handleToggle() {
+    if (checkingPushState) {
+      return;
+    }
+
+    pushError = '';
+
     if (!settings.notificationsEnabled) {
-      const granted = await ensureNotificationPermission();
-      if (!granted) {
+      if (!isPushSupported()) {
+        pushError = NOT_SUPPORTED_ERROR;
+        setNotificationsEnabled(false);
+        return;
+      }
+
+      const permission = await requestNotificationPermission();
+      notificationPermission = permission;
+      if (permission !== 'granted') {
+        pushError = PERMISSION_DENIED_ERROR;
+        setNotificationsEnabled(false);
         return;
       }
 
       const subscribed = await subscribeToPushNotifications();
       if (!subscribed) {
+        pushError = iosPwaRequired ? IOS_PWA_REQUIRED_ERROR : SUBSCRIBE_FAILED_ERROR;
+        setNotificationsEnabled(false);
         return;
       }
+
+      setNotificationsEnabled(true);
     } else {
       await unsubscribeFromPushNotifications();
+      setNotificationsEnabled(false);
     }
-
-    settings = { ...settings, notificationsEnabled: !settings.notificationsEnabled };
-    setSettings(settings);
   }
 
   function handleOverlayKeydown(e: KeyboardEvent) {
@@ -62,14 +164,40 @@
             id="notifications-toggle"
             class="toggle-btn"
             class:active={settings.notificationsEnabled}
+            disabled={checkingPushState || notificationPermissionDenied}
             onclick={handleToggle}
             aria-checked={settings.notificationsEnabled}
             role="switch"
             aria-label="Enable notifications"
           >
-            {settings.notificationsEnabled ? 'ON' : 'OFF'}
+            {#if checkingPushState}
+              ...
+            {:else if settings.notificationsEnabled}
+              ON
+            {:else}
+              OFF
+            {/if}
           </button>
         </div>
+
+        {#if checkingPushState}
+          <p class="setting-note">Проверка текущей push-подписки...</p>
+        {/if}
+
+        {#if notificationPermissionDenied}
+          <p class="setting-note warning">Разрешения на уведомления отклонены в настройках браузера</p>
+        {/if}
+
+        {#if iosPwaRequired}
+          <p class="setting-note">
+            На iPhone/iPad push-уведомления работают только если добавить приложение на главный
+            экран
+          </p>
+        {/if}
+
+        {#if pushError}
+          <p class="setting-note error">Не удалось подписаться: {pushError}</p>
+        {/if}
       </div>
 
       <div class="modal-footer">
@@ -174,6 +302,11 @@
     flex-shrink: 0;
   }
 
+  .toggle-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.7;
+  }
+
   .toggle-btn.active {
     background: rgba(63, 185, 80, 0.15);
     border-color: var(--accent-green);
@@ -194,6 +327,21 @@
     justify-content: flex-end;
     border-top: 1px solid var(--border-default);
     padding-top: var(--space-3);
+  }
+
+  .setting-note {
+    margin: 0;
+    font-size: var(--font-size-xs);
+    line-height: 1.4;
+    color: var(--text-muted);
+  }
+
+  .setting-note.warning {
+    color: var(--accent-orange, #d29922);
+  }
+
+  .setting-note.error {
+    color: var(--accent-red);
   }
 
   .btn {

@@ -17,6 +17,10 @@ interface PushUnsubscribeBody {
   endpoint: string;
 }
 
+interface PushSubscribeBody {
+  subscription: PushSubscription;
+}
+
 let notificationAudioWarningLogged = false;
 
 export function setupNotificationAudioUnlock(): void {
@@ -30,6 +34,35 @@ function canUseNotifications(): boolean {
 
 function canUsePushManager(): boolean {
   return typeof window !== 'undefined' && 'serviceWorker' in navigator && 'PushManager' in window;
+}
+
+function isStandaloneMode(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') {
+    return false;
+  }
+
+  return window.matchMedia('(display-mode: standalone)').matches;
+}
+
+function isIOS(): boolean {
+  if (typeof navigator === 'undefined') {
+    return false;
+  }
+
+  return /iPhone|iPad|iPod/.test(navigator.userAgent);
+}
+
+export function isPushSupported(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    'serviceWorker' in navigator &&
+    'PushManager' in window &&
+    'Notification' in window
+  );
+}
+
+export function isIOSPWARequired(): boolean {
+  return isIOS() && !isStandaloneMode();
 }
 
 export function urlBase64ToUint8Array(base64String: string): Uint8Array {
@@ -51,6 +84,19 @@ async function getServiceWorkerRegistration(): Promise<ServiceWorkerRegistration
   }
 }
 
+export async function getCurrentPushSubscription(): Promise<PushSubscription | null> {
+  if (!isPushSupported()) {
+    return null;
+  }
+
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    return await registration.pushManager.getSubscription();
+  } catch {
+    return null;
+  }
+}
+
 async function fetchVapidPublicKey(): Promise<string | null> {
   try {
     const response = await fetch('/api/push/vapid-public-key');
@@ -64,6 +110,25 @@ async function fetchVapidPublicKey(): Promise<string | null> {
       : null;
   } catch {
     return null;
+  }
+}
+
+export async function ensureServerPushSubscription(
+  subscription: PushSubscription,
+): Promise<boolean> {
+  try {
+    const payload: PushSubscribeBody = { subscription };
+    const response = await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
+    });
+
+    return response.ok;
+  } catch {
+    return false;
   }
 }
 
@@ -90,19 +155,7 @@ export async function subscribeToPushNotifications(): Promise<boolean> {
     }
   }
 
-  try {
-    const response = await fetch('/api/push/subscribe', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ subscription }),
-    });
-
-    return response.ok;
-  } catch {
-    return false;
-  }
+  return ensureServerPushSubscription(subscription);
 }
 
 export async function unsubscribeFromPushNotifications(): Promise<boolean> {
