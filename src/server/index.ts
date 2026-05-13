@@ -592,7 +592,12 @@ function setupRoutes(
       return reply.code(404).send({ error: 'Session not found' });
     }
 
-    await supervisor.terminate(request.params.id);
+    try {
+      await supervisor.terminate(request.params.id);
+    } catch {
+      // best-effort: session is dead regardless; proceed with notification
+    }
+
     broadcastExit(request.params.id, 0);
     return reply.send({ ok: true });
   });

@@ -4,14 +4,22 @@ import { buildServiceSpec, createAutostartAdapter } from '../../autostart/index.
 import { resolveCliEntryPathFromProcess } from '../../runtime/install-context.js';
 import { applySharedStartOptions, resolveStartOptions, type StartCommandOptions } from './start.js';
 
-function resolvePathEnv(): string {
+function resolveEnvironment(): Record<string, string> {
   const pathEnv = process.env.PATH;
 
   if (typeof pathEnv !== 'string' || pathEnv.trim().length === 0) {
     throw new Error('Cannot enable autostart: PATH is empty in current shell environment.');
   }
 
-  return pathEnv;
+  // Capture full environment, filtering out undefined values
+  const env: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value !== undefined) {
+      env[key] = value;
+    }
+  }
+
+  return env;
 }
 
 async function runAutostartOn(opts: StartCommandOptions): Promise<void> {
@@ -26,7 +34,7 @@ async function runAutostartOn(opts: StartCommandOptions): Promise<void> {
     mode: adapter.mode,
     cliPath: resolveCliEntryPathFromProcess(),
     startArgv: resolved.startArgv,
-    pathEnv: resolvePathEnv(),
+    environment: resolveEnvironment(),
   });
 
   await adapter.apply(serviceSpec);
