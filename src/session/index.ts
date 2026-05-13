@@ -240,7 +240,11 @@ export class SessionSupervisor {
       return;
     }
 
-    await killSession(current.tmuxName);
+    try {
+      await killSession(current.tmuxName);
+    } catch (error) {
+      console.warn(`[session] killSession(${current.tmuxName}) failed; continuing cleanup:`, error);
+    }
 
     const endedAt = new Date();
     current.status = 'exited';

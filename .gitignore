@@ -7,3 +7,5 @@ dist/
 coverage/
 .github/tracking
 .github/documents
+.opencode/index
+.opencode/tracking

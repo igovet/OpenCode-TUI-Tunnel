@@ -88,7 +88,7 @@ export class SystemdUserAutostartAdapter implements AutostartAdapter {
 
     await this.disable();
     await mkdir(dirname(this.definitionPath), { recursive: true });
-    await writeFile(this.definitionPath, unitContent, { encoding: 'utf8', mode: 0o644 });
+    await writeFile(this.definitionPath, unitContent, { encoding: 'utf8', mode: 0o600 });
 
     const reloadResult = await runSystemctlUser(['daemon-reload']);
     if (reloadResult.code !== 0) {

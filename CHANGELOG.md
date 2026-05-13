@@ -5,6 +5,17 @@ All notable changes to this project are documented here.
 ---
 
 <details open>
+<summary><strong>v0.1.9</strong> — 2026-05-13</summary>
+
+### 🔧 Bug Fixes
+
+- **Terminal kill/close error handling**: When closing or killing a terminal tab, if the tmux session has already crashed or doesn't exist, the operation now gracefully handles the error instead of throwing. Tabs can be closed even for broken/crashed terminals.
+- **Autostart clipboard fix**: The `autostart` command now captures the full user environment (DISPLAY, WAYLAND_DISPLAY, XDG_SESSION_TYPE, etc.) instead of only PATH. This fixes clipboard (copy/paste) functionality in opencode when launched via autostart.
+- **Security and robustness hardening**: Service file permissions changed from 644 to 600 (owner-only) to protect environment variables in the service definition. Error logging added to terminal kill catch blocks. Newline escaping added to systemd environment values.
+
+</details>
+
+<details>
 <summary><strong>v0.1.8</strong> — 2026-04-13</summary>
 
 ### 🎯 Adaptive Mobile Keybar (complete rebuild)

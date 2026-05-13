@@ -35,7 +35,7 @@ export function buildServiceSpec(input: {
   mode: AutostartMode;
   cliPath: string;
   startArgv: string[];
-  pathEnv: string;
+  environment: Record<string, string>;
 }): ServiceSpec {
   const label = input.mode === 'systemd' ? SYSTEMD_USER_LABEL : LAUNCHD_LABEL;
 
@@ -44,9 +44,7 @@ export function buildServiceSpec(input: {
     cliPath: input.cliPath,
     mode: input.mode,
     workingDirectory: homedir(),
-    environment: {
-      PATH: input.pathEnv,
-    },
+    environment: input.environment,
     startArgv: [...input.startArgv],
   };
 }

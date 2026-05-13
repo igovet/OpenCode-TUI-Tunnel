@@ -66,7 +66,11 @@ function escapeSystemdExecToken(token: string): string {
 }
 
 function escapeSystemdEnvironmentValue(value: string): string {
-  return value.replaceAll('\\', '\\\\').replaceAll('"', '\\"').replaceAll('%', '%%');
+  return value
+    .replaceAll('\\', '\\\\')
+    .replaceAll('"', '\\"')
+    .replaceAll('%', '%%')
+    .replaceAll('\n', '\\n');
 }
 
 function escapeXml(value: string): string {
@@ -81,7 +85,11 @@ function escapeXml(value: string): string {
 export function renderSystemdUserUnit(spec: ServiceSpec): string {
   const argv = buildRunServerArgv(spec);
   const execStart = argv.map(escapeSystemdExecToken).join(' ');
-  const pathEnv = escapeSystemdEnvironmentValue(spec.environment.PATH);
+
+  const environmentLines = Object.entries(spec.environment).map(([key, value]) => {
+    const escapedValue = escapeSystemdEnvironmentValue(value);
+    return `Environment="${key}=${escapedValue}"`;
+  });
 
   return [
     '[Unit]',
@@ -90,7 +98,7 @@ export function renderSystemdUserUnit(spec: ServiceSpec): string {
     '[Service]',
     'Type=simple',
     `ExecStart=${execStart}`,
-    `Environment="PATH=${pathEnv}"`,
+    ...environmentLines,
     'WorkingDirectory=%h',
     'Restart=on-failure',
     '',
@@ -103,9 +111,12 @@ export function renderSystemdUserUnit(spec: ServiceSpec): string {
 export function renderLaunchdAgentPlist(spec: ServiceSpec): string {
   const argv = buildRunServerArgv(spec);
   const argumentLines = argv.map((token) => `    <string>${escapeXml(token)}</string>`).join('\n');
-  const pathEnv = escapeXml(spec.environment.PATH);
   const label = escapeXml(spec.label);
   const workingDirectory = escapeXml(spec.workingDirectory);
+
+  const environmentVars = Object.entries(spec.environment)
+    .map(([key, value]) => `    <key>${escapeXml(key)}</key>\n    <string>${escapeXml(value)}</string>`)
+    .join('\n');
 
   return [
     '<?xml version="1.0" encoding="UTF-8"?>',
@@ -126,8 +137,7 @@ export function renderLaunchdAgentPlist(spec: ServiceSpec): string {
     `  <string>${workingDirectory}</string>`,
     '  <key>EnvironmentVariables</key>',
     '  <dict>',
-    '    <key>PATH</key>',
-    `    <string>${pathEnv}</string>`,
+    environmentVars,
     '  </dict>',
     '</dict>',
     '</plist>',

@@ -97,7 +97,7 @@ export class LaunchdAgentAutostartAdapter implements AutostartAdapter {
 
     await this.disable();
     await mkdir(dirname(this.definitionPath), { recursive: true });
-    await writeFile(this.definitionPath, plistContent, { encoding: 'utf8', mode: 0o644 });
+    await writeFile(this.definitionPath, plistContent, { encoding: 'utf8', mode: 0o600 });
 
     const bootstrapResult = await runLaunchctl(['bootstrap', getGuiDomain(), this.definitionPath]);
     if (bootstrapResult.code !== 0) {
