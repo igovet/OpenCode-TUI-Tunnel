@@ -9,21 +9,38 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
 
+import { encryptPassphrase } from '../crypto/index.js';
 import type { AppConfig } from '../config/index.js';
 import {
   type Database,
+  countActiveSessionsForSshConnection,
+  deleteSshConnection,
   findManagedSessionByTmuxSessionName,
+  getSshConnection,
+  insertSshConnection,
   insertSession,
-  removePushSubscriptionByEndpoint,
   listProjectHistory,
+  listSshConnections,
   logEvent,
   openDb,
+  removePushSubscriptionByEndpoint,
+  updateSshConnection,
   upsertPushSubscription,
   upsertProjectHistory,
 } from '../db/index.js';
 import { suggestPaths } from './fs-suggest.js';
 import { SessionSupervisor, type SessionInfo } from '../session/index.js';
-import { attachToTmuxSession, listAllTmuxSessions, type TmuxPtyHandle } from '../tmux/adapter.js';
+import {
+  attachToTmuxSession,
+  listAllTmuxSessions,
+  type TmuxPtyHandle,
+} from '../tmux/adapter.js';
+import { connectSshClient, testSshConnection } from '../ssh/adapter.js';
+import {
+  checkSshfsAvailable,
+  cleanupStaleMounts,
+  cleanupAllMounts,
+} from '../sshfs/adapter.js';
 import {
   configureWebPush,
   encodePushKeys,
@@ -168,6 +185,8 @@ function serializeSession(session: SessionInfo) {
     ...session,
     startedAt: session.startedAt.toISOString(),
     endedAt: session.endedAt?.toISOString(),
+    backend: session.backend ?? 'tmux',
+    sshConnectionId: session.sshConnectionId ?? null,
   };
 }
 
@@ -332,10 +351,38 @@ function setupRoutes(
     });
   };
 
-  app.get<{ Querystring: { q?: string } }>('/api/fs/suggest', async (request) => {
-    const q = typeof request.query.q === 'string' ? request.query.q : '';
-    return { suggestions: suggestPaths(q, 5) };
-  });
+  app.get<{ Querystring: { q?: string; sshConnectionId?: string } }>(
+    '/api/fs/suggest',
+    async (request) => {
+      const q = typeof request.query.q === 'string' ? request.query.q : '';
+      const sshConnectionId =
+        typeof request.query.sshConnectionId === 'string'
+          ? request.query.sshConnectionId
+          : undefined;
+
+      if (sshConnectionId) {
+        const sshConn = getSshConnection(db, sshConnectionId);
+        if (!sshConn) {
+          return { suggestions: [] };
+        }
+
+        try {
+          const client = await connectSshClient(sshConn, config);
+          try {
+            const suggestions = await suggestRemotePaths(client, q, 5);
+            return { suggestions };
+          } finally {
+            client.end();
+          }
+        } catch {
+          return { suggestions: [] };
+        }
+      }
+
+      const suggestions = suggestPaths(q, 5);
+      return { suggestions };
+    },
+  );
 
   app.get('/api/projects/history', async () => {
     return { history: listProjectHistory(db) };
@@ -509,6 +556,7 @@ function setupRoutes(
         last_seq: 0,
         reconnectable: 1,
         interrupted_reason: null,
+        ssh_connection_id: null,
       });
 
       logEvent(db, sessionId, 'session_attached_existing_tmux', { name, cols, rows, cwd });
@@ -538,7 +586,9 @@ function setupRoutes(
   });
 
   app.post('/api/sessions', async (request, reply) => {
-    const body = request.body as { cwd?: unknown; cols?: unknown; rows?: unknown } | undefined;
+    const body = request.body as
+      | { cwd?: unknown; cols?: unknown; rows?: unknown; sshConnectionId?: unknown }
+      | undefined;
 
     if (!body || typeof body !== 'object') {
       return reply.code(400).send({ error: 'Request body must be an object' });
@@ -548,22 +598,38 @@ function setupRoutes(
       return reply.code(400).send({ error: 'cwd is required' });
     }
 
+    const sshConnectionId =
+      typeof body.sshConnectionId === 'string' && body.sshConnectionId.trim().length > 0
+        ? body.sshConnectionId.trim()
+        : undefined;
+
     const resolvedCwd = resolve(expandHomePath(body.cwd));
 
-    if (!existsSync(resolvedCwd)) {
-      return reply.code(400).send({ error: 'cwd does not exist on disk' });
-    }
+    if (!sshConnectionId) {
+      if (!existsSync(resolvedCwd)) {
+        return reply.code(400).send({ error: 'cwd does not exist on disk' });
+      }
 
-    if (!isUnderAllowedRoots(resolvedCwd, config.paths.allowedRoots)) {
-      return reply.code(403).send({ error: 'cwd is outside configured allowedRoots' });
+      if (!isUnderAllowedRoots(resolvedCwd, config.paths.allowedRoots)) {
+        return reply.code(403).send({ error: 'cwd is outside configured allowedRoots' });
+      }
     }
 
     const cols = toPositiveInt(body.cols, config.sessions.defaultCols);
     const rows = toPositiveInt(body.rows, config.sessions.defaultRows);
 
+    let source: string | undefined;
+    if (sshConnectionId) {
+      const sshConn = getSshConnection(db, sshConnectionId);
+      if (!sshConn) {
+        return reply.code(404).send({ error: 'SSH connection not found' });
+      }
+      source = sshConn.name;
+    }
+
     try {
-      const session = await supervisor.launch(resolvedCwd, cols, rows);
-      upsertProjectHistory(db, resolvedCwd);
+      const session = await supervisor.launch(resolvedCwd, cols, rows, sshConnectionId);
+      upsertProjectHistory(db, resolvedCwd, source);
       return reply.code(201).send({
         session: serializeSession(session),
         streamUrl: `/api/sessions/${session.id}/stream`,
@@ -602,10 +668,324 @@ function setupRoutes(
     return reply.send({ ok: true });
   });
 
+  // SSH Connection CRUD endpoints
+  app.get('/api/ssh/connections', async () => {
+    const connections = listSshConnections(db).map((conn) => ({
+      id: conn.id,
+      name: conn.name,
+      host: conn.host,
+      port: conn.port,
+      username: conn.username,
+      authType: conn.auth_type,
+      privateKeyPath: conn.private_key_path,
+      opencodeProvider: conn.opencode_provider,
+      opencodeCommand: conn.opencode_command,
+      createdAt: conn.created_at,
+      updatedAt: conn.updated_at,
+    }));
+    return { connections };
+  });
+
+  app.post<{ Body: Record<string, unknown> }>('/api/ssh/connections', async (request, reply) => {
+    const body = request.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return reply.code(400).send({ error: 'Request body must be an object' });
+    }
+
+    const name = typeof body.name === 'string' ? body.name.trim() : '';
+    const host = typeof body.host === 'string' ? body.host.trim() : '';
+    const port = toPositiveInt(body.port, 22);
+    const username = typeof body.username === 'string' ? body.username.trim() : '';
+    const authType = typeof body.authType === 'string' ? body.authType.trim() : '';
+    const privateKeyPath =
+      typeof body.privateKeyPath === 'string' ? body.privateKeyPath.trim() || null : null;
+    const passphrase =
+      typeof body.passphrase === 'string' ? body.passphrase.trim() || null : null;
+    const opencodeProvider =
+      typeof body.opencodeProvider === 'string' ? body.opencodeProvider.trim() : 'server';
+    const opencodeCommand =
+      typeof body.opencodeCommand === 'string' && body.opencodeCommand.trim().length > 0
+        ? body.opencodeCommand.trim()
+        : null;
+
+    if (!name) {
+      return reply.code(400).send({ error: 'name is required' });
+    }
+    if (!host) {
+      return reply.code(400).send({ error: 'host is required' });
+    }
+    if (port < 1 || port > 65535) {
+      return reply.code(400).send({ error: 'port must be between 1 and 65535' });
+    }
+    if (!username) {
+      return reply.code(400).send({ error: 'username is required' });
+    }
+    if (authType !== 'key' && authType !== 'agent') {
+      return reply.code(400).send({ error: 'authType must be "key" or "agent"' });
+    }
+    if (opencodeProvider !== 'local' && opencodeProvider !== 'server') {
+      return reply.code(400).send({ error: 'opencodeProvider must be "local" or "server"' });
+    }
+
+    const existingByName = db
+      .prepare('SELECT id FROM ssh_connections WHERE name = ?')
+      .get(name) as { id: string } | undefined;
+    if (existingByName) {
+      return reply.code(409).send({ error: 'SSH connection with this name already exists' });
+    }
+
+    const now = new Date().toISOString();
+    const encryptedPassphrase = passphrase ? encryptPassphrase(passphrase) : null;
+    const record = {
+      id: randomUUID(),
+      name,
+      host,
+      port,
+      username,
+      auth_type: authType,
+      private_key_path: privateKeyPath,
+      passphrase_encrypted: encryptedPassphrase,
+      opencode_provider: opencodeProvider,
+      opencode_command: opencodeProvider === 'local' ? null : opencodeCommand,
+      created_at: now,
+      updated_at: now,
+    };
+
+    insertSshConnection(db, record);
+
+    return reply.code(201).send({
+      connection: {
+        id: record.id,
+        name: record.name,
+        host: record.host,
+        port: record.port,
+        username: record.username,
+        authType: record.auth_type,
+        privateKeyPath: record.private_key_path,
+        opencodeProvider: record.opencode_provider,
+        opencodeCommand: record.opencode_command,
+        createdAt: record.created_at,
+        updatedAt: record.updated_at,
+      },
+    });
+  });
+
+  app.get<{ Params: { id: string } }>('/api/ssh/connections/:id', async (request, reply) => {
+    const connection = getSshConnection(db, request.params.id);
+    if (!connection) {
+      return reply.code(404).send({ error: 'SSH connection not found' });
+    }
+    return {
+      connection: {
+        id: connection.id,
+        name: connection.name,
+        host: connection.host,
+        port: connection.port,
+        username: connection.username,
+        authType: connection.auth_type,
+        privateKeyPath: connection.private_key_path,
+        opencodeProvider: connection.opencode_provider,
+        opencodeCommand: connection.opencode_command,
+        createdAt: connection.created_at,
+        updatedAt: connection.updated_at,
+      },
+    };
+  });
+
+  app.put<{ Params: { id: string }; Body: Record<string, unknown> }>(
+    '/api/ssh/connections/:id',
+    async (request, reply) => {
+      const id = request.params.id;
+      const existing = getSshConnection(db, id);
+      if (!existing) {
+        return reply.code(404).send({ error: 'SSH connection not found' });
+      }
+
+      const body = request.body;
+      if (!body || typeof body !== 'object' || Array.isArray(body)) {
+        return reply.code(400).send({ error: 'Request body must be an object' });
+      }
+
+      const updates: Partial<{
+        name: string;
+        host: string;
+        port: number;
+        username: string;
+        auth_type: string;
+        private_key_path: string | null;
+        passphrase_encrypted: string | null;
+        opencode_provider: string;
+        opencode_command: string | null;
+        updated_at: string;
+      }> = {};
+
+      if (typeof body.name === 'string') {
+        const trimmed = body.name.trim();
+        if (trimmed && trimmed !== existing.name) {
+          const nameConflict = db
+            .prepare('SELECT id FROM ssh_connections WHERE name = ? AND id != ?')
+            .get(trimmed, id) as { id: string } | undefined;
+          if (nameConflict) {
+            return reply.code(409).send({ error: 'SSH connection with this name already exists' });
+          }
+          updates.name = trimmed;
+        }
+      }
+      if (typeof body.host === 'string') {
+        updates.host = body.host.trim();
+      }
+      if (typeof body.port === 'number' || typeof body.port === 'string') {
+        const parsedPort = toPositiveInt(body.port, existing.port);
+        if (parsedPort < 1 || parsedPort > 65535) {
+          return reply.code(400).send({ error: 'port must be between 1 and 65535' });
+        }
+        updates.port = parsedPort;
+      }
+      if (typeof body.username === 'string') {
+        updates.username = body.username.trim();
+      }
+      if (typeof body.authType === 'string') {
+        const at = body.authType.trim();
+        if (at !== 'key' && at !== 'agent') {
+          return reply.code(400).send({ error: 'authType must be "key" or "agent"' });
+        }
+        updates.auth_type = at;
+      }
+      if ('privateKeyPath' in body) {
+        updates.private_key_path =
+          typeof body.privateKeyPath === 'string' ? body.privateKeyPath.trim() || null : null;
+      }
+      // Only update passphrase if a non-empty passphrase is explicitly provided.
+      // An empty/missing passphrase in the request body means "don't change the existing passphrase".
+      if (
+        typeof body.passphrase === 'string' &&
+        body.passphrase.trim().length > 0
+      ) {
+        updates.passphrase_encrypted = encryptPassphrase(body.passphrase.trim());
+      }
+      if (typeof body.opencodeProvider === 'string') {
+        const provider = body.opencodeProvider.trim();
+        if (provider !== 'local' && provider !== 'server') {
+          return reply.code(400).send({ error: 'opencodeProvider must be "local" or "server"' });
+        }
+        updates.opencode_provider = provider;
+        // If switching to local, clear custom command
+        if (provider === 'local') {
+          updates.opencode_command = null;
+        }
+      }
+      if ('opencodeCommand' in body && updates.opencode_provider !== 'local') {
+        updates.opencode_command =
+          typeof body.opencodeCommand === 'string' && body.opencodeCommand.trim().length > 0
+            ? body.opencodeCommand.trim()
+            : null;
+      }
+
+      updates.updated_at = new Date().toISOString();
+
+      updateSshConnection(db, id, updates);
+
+      const updated = getSshConnection(db, id)!;
+      return {
+        connection: {
+          id: updated.id,
+          name: updated.name,
+          host: updated.host,
+          port: updated.port,
+          username: updated.username,
+          authType: updated.auth_type,
+          privateKeyPath: updated.private_key_path,
+          opencodeProvider: updated.opencode_provider,
+          opencodeCommand: updated.opencode_command,
+          createdAt: updated.created_at,
+          updatedAt: updated.updated_at,
+        },
+      };
+    },
+  );
+
+  // Explicitly clear the encrypted passphrase for an SSH connection
+  app.post<{ Params: { id: string } }>(
+    '/api/ssh/connections/:id/clear-passphrase',
+    async (request, reply) => {
+      const id = request.params.id;
+      const existing = getSshConnection(db, id);
+      if (!existing) {
+        return reply.code(404).send({ error: 'SSH connection not found' });
+      }
+
+      updateSshConnection(db, id, {
+        passphrase_encrypted: null,
+        updated_at: new Date().toISOString(),
+      });
+
+      return { success: true };
+    },
+  );
+
+  app.delete<{ Params: { id: string } }>('/api/ssh/connections/:id', async (request, reply) => {
+    const id = request.params.id;
+    const existing = getSshConnection(db, id);
+    if (!existing) {
+      return reply.code(404).send({ error: 'SSH connection not found' });
+    }
+
+    const activeCount = countActiveSessionsForSshConnection(db, id);
+    if (activeCount > 0) {
+      return reply
+        .code(409)
+        .send({ error: 'Cannot delete SSH connection with active sessions' });
+    }
+
+    deleteSshConnection(db, id);
+    return reply.send({ ok: true });
+  });
+
+  // Rate limiter for SSH test endpoint: 5 requests per minute per IP
+  const sshTestRateLimiter = new Map<string, { count: number; windowStart: number }>();
+  const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
+  const RATE_LIMIT_MAX_REQUESTS = 5;
+
+  app.post<{ Params: { id: string } }>('/api/ssh/connections/:id/test', async (request, reply) => {
+    const clientIp = request.ip;
+    const now = Date.now();
+
+    // Check rate limit
+    const entry = sshTestRateLimiter.get(clientIp);
+    if (entry) {
+      const elapsed = now - entry.windowStart;
+      if (elapsed < RATE_LIMIT_WINDOW_MS) {
+        if (entry.count >= RATE_LIMIT_MAX_REQUESTS) {
+          return reply.code(429).send({
+            error: 'Too Many Requests',
+            message: `Rate limit exceeded. Maximum ${RATE_LIMIT_MAX_REQUESTS} test requests per minute.`,
+            retryAfter: Math.ceil((RATE_LIMIT_WINDOW_MS - elapsed) / 1000),
+          });
+        }
+        entry.count++;
+      } else {
+        // Window expired, reset
+        entry.count = 1;
+        entry.windowStart = now;
+      }
+    } else {
+      sshTestRateLimiter.set(clientIp, { count: 1, windowStart: now });
+    }
+
+    const id = request.params.id;
+    const existing = getSshConnection(db, id);
+    if (!existing) {
+      return reply.code(404).send({ error: 'SSH connection not found' });
+    }
+
+    const result = await testSshConnection(existing, config);
+    return reply.send(result);
+  });
+
   app.get<{ Params: { id: string }; Querystring: { cols?: string; rows?: string } }>(
     '/api/sessions/:id/stream',
     { websocket: true },
-    (connection, request) => {
+    async (connection, request) => {
       const ws =
         (connection as { socket?: StreamSocket }).socket ?? (connection as unknown as StreamSocket);
       const cols = toPositiveInt(request.query.cols, WS_DEFAULT_COLS);
@@ -706,7 +1086,7 @@ function setupRoutes(
       };
 
       try {
-        handle = supervisor.attach(id, cols, rows);
+        handle = await supervisor.attach(id, cols, rows);
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Failed to attach to session';
         closeWithError(message, 'Session unavailable');
@@ -825,6 +1205,15 @@ function setupRoutes(
     },
   );
 
+  app.get('/api/system/sshfs', async () => {
+    const result = await checkSshfsAvailable();
+    return {
+      available: result.available,
+      path: result.path,
+      platform: process.platform,
+    };
+  });
+
   app.get<{ Params: { '*': string } }>('/assets/*', async (request, reply) => {
     return reply.sendFile(`assets/${request.params['*']}`);
   });
@@ -832,6 +1221,100 @@ function setupRoutes(
   // SPA fallback: serve index.html for all non-api GET requests
   app.get('/*', async (_request, reply) => {
     return reply.sendFile('index.html');
+  });
+}
+
+async function suggestRemotePaths(
+  client: import('ssh2').Client,
+  partial: string,
+  limit: number,
+): Promise<string[]> {
+  return new Promise((resolve) => {
+    const trimmed = partial.trim();
+
+    // Parse partial path into directory to list and prefix to filter by,
+    // mirroring the logic in local suggestPaths()
+    let dirPart: string;
+    let prefixPart: string;
+
+    if (trimmed.length === 0 || trimmed === '~') {
+      dirPart = '~';
+      prefixPart = '';
+    } else if (trimmed === '/') {
+      dirPart = '/';
+      prefixPart = '';
+    } else {
+      const lastSlash = trimmed.lastIndexOf('/');
+      if (lastSlash >= 0) {
+        dirPart = trimmed.slice(0, lastSlash + 1);
+        prefixPart = trimmed.slice(lastSlash + 1);
+      } else {
+        dirPart = '~';
+        prefixPart = trimmed;
+      }
+    }
+
+    // Build a find command that lists immediate subdirectories.
+    // -mindepth 1 excludes the parent directory itself.
+    // We quote the path for safety, but leave ~ unquoted so the remote
+    // shell expands it to the user's home directory.
+    const needsQuoting =
+      !dirPart.startsWith('~') &&
+      (dirPart.includes(' ') || dirPart.includes('"') || dirPart.includes("'"));
+    const escapedDir = needsQuoting
+      ? `"${dirPart.replace(/"/g, '\\"')}"`
+      : dirPart;
+    const remoteCmd = `bash -c 'find ${escapedDir} -mindepth 1 -maxdepth 1 -type d 2>/dev/null'`;
+
+    console.log('[suggestRemotePaths] partial=', partial, 'dirPart=', dirPart, 'prefixPart=', prefixPart, 'remoteCmd=', remoteCmd);
+
+    client.exec(remoteCmd, (error, channel) => {
+      if (error) {
+        console.log('[suggestRemotePaths] exec error:', error);
+        resolve([]);
+        return;
+      }
+
+      let stdout = '';
+      let stderr = '';
+
+      channel.on('data', (data: Buffer | string) => {
+        const chunk = Buffer.isBuffer(data) ? data.toString('utf8') : data;
+        console.log('[suggestRemotePaths] stdout chunk:', JSON.stringify(chunk));
+        stdout += chunk;
+      });
+
+      channel.stderr.on('data', (data: Buffer | string) => {
+        const chunk = Buffer.isBuffer(data) ? data.toString('utf8') : data;
+        console.log('[suggestRemotePaths] stderr chunk:', JSON.stringify(chunk));
+        stderr += chunk;
+      });
+
+      channel.on('close', () => {
+        console.log('[suggestRemotePaths] close. total stdout:', JSON.stringify(stdout), 'stderr:', JSON.stringify(stderr));
+        if (!stdout.trim()) {
+          resolve([]);
+          return;
+        }
+
+        const lines = stdout.trim().split(/\r?\n/);
+        console.log('[suggestRemotePaths] raw lines:', lines);
+
+        const suggestions = lines
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0)
+          .filter((line) => {
+            if (!prefixPart) return true;
+            const basename = line.split('/').pop() || '';
+            return basename.toLowerCase().startsWith(prefixPart.toLowerCase());
+          })
+          .sort((a, b) => a.localeCompare(b))
+          .slice(0, limit);
+
+        console.log('[suggestRemotePaths] suggestions:', suggestions);
+        resolve(suggestions);
+      });
+    });
   });
 }
 
@@ -846,6 +1329,16 @@ export async function startServer(config: AppConfig): Promise<ServerStartInfo> {
   const db = openDb();
   const supervisor = new SessionSupervisor(db, resolvedConfig);
   await supervisor.restore();
+
+  // Clean up any stale SSHFS mounts from previous runs
+  try {
+    const cleanedCount = await cleanupStaleMounts();
+    if (cleanedCount > 0) {
+      console.log(`[server] Cleaned ${cleanedCount} stale SSHFS mount(s) on startup`);
+    }
+  } catch (error) {
+    console.warn('[server] Stale mount cleanup failed (non-fatal):', error);
+  }
 
   const app = Fastify({ logger: true });
   const webRoot = resolveWebRoot();
@@ -887,6 +1380,16 @@ export async function stopServer(): Promise<void> {
     if (!state) {
       stopInProgress = null;
       return;
+    }
+
+    // Clean up all active SSHFS mounts before shutting down
+    try {
+      const unmountedCount = await cleanupAllMounts();
+      if (unmountedCount > 0) {
+        console.log(`[server] Unmounted ${unmountedCount} active SSHFS mount(s) on shutdown`);
+      }
+    } catch (error) {
+      console.warn('[server] Mount cleanup on shutdown failed (non-fatal):', error);
     }
 
     try {

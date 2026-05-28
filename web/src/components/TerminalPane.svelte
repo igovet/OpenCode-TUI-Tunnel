@@ -32,6 +32,8 @@
   let connectionStatusText = $derived(
     connectionStatus === 'reconnecting' ? 'Reconnection...' : 'Connection...',
   );
+  let isSshTab = $derived(tab?.backend === 'ssh');
+  let sshLabel = $derived(isSshTab ? '🌐 SSH' : '');
 
   let resizeTimer: ReturnType<typeof setTimeout> | null = null;
   let ongoingResizeObserver: ResizeObserver | null = null;
@@ -245,6 +247,9 @@
 >
   {#if isActive}
     <div class="zoom-toolbar">
+      {#if isSshTab}
+        <span class="ssh-indicator" title="SSH remote session">{sshLabel}</span>
+      {/if}
       <button class="zoom-trigger" onclick={toggleZoomMenu} aria-haspopup="menu" aria-expanded={zoomMenuOpen} aria-label="Terminal zoom presets">
         {zoomState.value}px ▾
       </button>
@@ -281,6 +286,22 @@
     top: 0;
     right: 16px;
     z-index: 10;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .ssh-indicator {
+    font-size: 11px;
+    padding: 2px 6px;
+    background: rgba(34, 211, 238, 0.1);
+    border: 1px solid var(--accent-cyan);
+    border-radius: 0;
+    color: var(--accent-cyan);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    pointer-events: none;
+    user-select: none;
   }
 
   .zoom-trigger {

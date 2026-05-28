@@ -19,19 +19,34 @@
   }
 </script>
 
-<div class="card terminal-card">
+<div class="card terminal-card" class:ssh-card={session.backend === 'ssh'}>
   <div class="header">
     <div class="title-row">
       <h3 title={session.cwd} class="session-title"><span class="prompt"></span>{getBasename(session.cwd)}</h3>
       <StatusBadge status={session.status} />
     </div>
-    <div class="meta">
+    {#if session.backend === 'ssh' || (session.backend === 'tmux' && session.sshConnectionId)}
+      <div class="meta provider-meta">
+        {#if session.backend === 'ssh'}
+          <span class="provider-badge server">🌐 Server</span>
+        {:else}
+          <span class="provider-badge sshfs">📁 Local (SSHFS)</span>
+        {/if}
+        {#if session.source}
+          <span class="ssh-badge" title={session.source}>
+            <span class="ssh-icon">🌐</span>
+            {session.source}
+          </span>
+        {/if}
+      </div>
+    {/if}
+    <div class="meta time-meta">
       <span class="meta-item">up {timeAgo(session.startedAt)}</span>
       <span class="meta-divider">|</span>
       <span class="meta-item">{session.clientCount} usr</span>
     </div>
   </div>
-  
+
   <div class="actions">
     <button class="btn kill-btn" onclick={() => onKill(session.id)} disabled={session.status === 'exited' || session.status === 'failed'}>
       KILL
@@ -65,7 +80,8 @@
   .header {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: 4px;
+    min-width: 0;
   }
   
   .title-row {
@@ -111,12 +127,63 @@
     gap: var(--space-2);
     align-items: center;
     font-family: var(--font-mono);
+    flex-wrap: wrap;
+    min-width: 0;
   }
-  
+
+  .provider-meta {
+    gap: var(--space-2);
+    row-gap: 4px;
+  }
+
+  .time-meta {
+    gap: var(--space-2);
+  }
+
   .meta-divider {
     color: var(--border-muted);
+    flex-shrink: 0;
   }
-  
+
+  .ssh-badge {
+    color: var(--accent-cyan);
+    font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .ssh-icon {
+    margin-right: 4px;
+    flex-shrink: 0;
+  }
+
+  .ssh-card {
+    border-left: 3px solid var(--accent-cyan);
+  }
+
+  .provider-badge {
+    font-size: var(--font-size-xs);
+    padding: 1px 6px;
+    border: 1px solid;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .provider-badge.server {
+    color: var(--accent-cyan);
+    border-color: var(--accent-cyan);
+    background: rgba(34, 211, 238, 0.1);
+  }
+
+  .provider-badge.sshfs {
+    color: var(--accent-green);
+    border-color: var(--accent-green);
+    background: rgba(63, 185, 80, 0.1);
+  }
+
   .actions {
     display: flex;
     align-items: center;

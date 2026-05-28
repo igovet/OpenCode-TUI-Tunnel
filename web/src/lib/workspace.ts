@@ -8,6 +8,9 @@ export interface WorkspaceTab {
   attention?: 'question' | 'permission' | 'none';
   permissionId?: string;
   questionId?: string;
+  backend?: 'tmux' | 'ssh' | 'local';
+  sshConnectionId?: string;
+  source?: string;
 }
 
 export function isTerminalTabEnded(status: WorkspaceTab['status']): boolean {
@@ -23,8 +26,8 @@ function loadFromStorage(): { tabs: WorkspaceTab[]; activeTabId: string | null }
       const parsed = JSON.parse(stored);
       if (parsed && Array.isArray(parsed.tabs)) {
         const tabs = parsed.tabs
-          .filter((tab) => tab && typeof tab === 'object')
-          .map((tab) => {
+          .filter((tab: unknown) => tab && typeof tab === 'object')
+          .map((tab: unknown) => {
             const record = tab as Record<string, unknown>;
             const attentionRaw = record.attention;
             const attention =
@@ -50,9 +53,16 @@ function loadFromStorage(): { tabs: WorkspaceTab[]; activeTabId: string | null }
               permissionId:
                 typeof record.permissionId === 'string' ? record.permissionId : undefined,
               questionId: typeof record.questionId === 'string' ? record.questionId : undefined,
+              backend:
+                record.backend === 'tmux' || record.backend === 'ssh'
+                  ? record.backend
+                  : 'local',
+              sshConnectionId:
+                typeof record.sshConnectionId === 'string' ? record.sshConnectionId : '',
+              source: typeof record.source === 'string' ? record.source : undefined,
             } satisfies WorkspaceTab;
           })
-          .filter((tab) => tab.sessionId.length > 0);
+          .filter((tab: WorkspaceTab) => tab.sessionId.length > 0);
 
         return {
           tabs,

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 import BetterSqlite3 from 'better-sqlite3';
 
+import { encryptPassphrase, isPassphraseEncrypted } from '../crypto/index.js';
 import { getConfigDir } from '../config/index.js';
 
 export type Database = BetterSqlite3.Database;
@@ -23,12 +24,14 @@ export interface SessionRecord {
   last_seq: number;
   reconnectable: number;
   interrupted_reason: string | null;
+  ssh_connection_id: string | null;
 }
 
 export interface ProjectHistoryRecord {
   path: string;
   last_used_at: string;
   session_count: number;
+  source: string | null;
 }
 
 export interface PushSubscriptionRow {
@@ -36,6 +39,21 @@ export interface PushSubscriptionRow {
   endpoint: string;
   keys: string;
   created_at: number;
+}
+
+export interface SshConnectionRecord {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  auth_type: string;
+  private_key_path: string | null;
+  passphrase_encrypted: string | null;
+  opencode_provider: string;
+  opencode_command: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 const SCHEMA_SQL = `
@@ -92,10 +110,45 @@ CREATE TABLE IF NOT EXISTS push_subscriptions (
   keys TEXT NOT NULL,
   created_at INTEGER NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS ssh_connections (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  host TEXT NOT NULL,
+  port INTEGER NOT NULL DEFAULT 22,
+  username TEXT NOT NULL,
+  auth_type TEXT NOT NULL,
+  private_key_path TEXT,
+  passphrase_encrypted TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
 `;
 
 function getDbPath(): string {
   return join(getConfigDir(), 'sessions.db');
+}
+
+function hasColumn(db: Database, tableName: string, columnName: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{
+    name: string;
+  }>;
+  return rows.some((row) => row.name === columnName);
+}
+
+function migrateSchema(db: Database): void {
+  if (!hasColumn(db, 'sessions', 'ssh_connection_id')) {
+    db.exec(`ALTER TABLE sessions ADD COLUMN ssh_connection_id TEXT REFERENCES ssh_connections(id)`);
+  }
+  if (!hasColumn(db, 'project_history', 'source')) {
+    db.exec(`ALTER TABLE project_history ADD COLUMN source TEXT`);
+  }
+  if (!hasColumn(db, 'ssh_connections', 'opencode_provider')) {
+    db.exec(`ALTER TABLE ssh_connections ADD COLUMN opencode_provider TEXT NOT NULL DEFAULT 'server'`);
+  }
+  if (!hasColumn(db, 'ssh_connections', 'opencode_command')) {
+    db.exec(`ALTER TABLE ssh_connections ADD COLUMN opencode_command TEXT`);
+  }
 }
 
 export function openDb(): Database {
@@ -104,6 +157,7 @@ export function openDb(): Database {
   const db = new BetterSqlite3(getDbPath());
   db.pragma('journal_mode = WAL');
   db.exec(SCHEMA_SQL);
+  migrateSchema(db);
 
   return db;
 }
@@ -126,7 +180,8 @@ export function insertSession(db: Database, session: SessionRecord): void {
         exit_code,
         last_seq,
         reconnectable,
-        interrupted_reason
+        interrupted_reason,
+        ssh_connection_id
       ) VALUES (
         @id,
         @backend,
@@ -142,7 +197,8 @@ export function insertSession(db: Database, session: SessionRecord): void {
         @exit_code,
         @last_seq,
         @reconnectable,
-        @interrupted_reason
+        @interrupted_reason,
+        @ssh_connection_id
       )
     `,
   ).run(session);
@@ -222,7 +278,7 @@ export function logEvent(
   ).run(sessionId, eventType, JSON.stringify(payload), new Date().toISOString());
 }
 
-export function upsertProjectHistory(db: Database, path: string): void {
+export function upsertProjectHistory(db: Database, path: string, source?: string): void {
   const now = new Date().toISOString();
 
   db.prepare(
@@ -230,13 +286,15 @@ export function upsertProjectHistory(db: Database, path: string): void {
       INSERT INTO project_history (
         path,
         last_used_at,
-        session_count
-      ) VALUES (?, ?, 1)
+        session_count,
+        source
+      ) VALUES (?, ?, 1, ?)
       ON CONFLICT(path) DO UPDATE SET
         last_used_at = excluded.last_used_at,
-        session_count = project_history.session_count + 1
+        session_count = project_history.session_count + 1,
+        source = COALESCE(excluded.source, project_history.source)
     `,
-  ).run(path, now);
+  ).run(path, now, source ?? null);
 }
 
 export function listProjectHistory(db: Database, limit = 20): ProjectHistoryRecord[] {
@@ -245,7 +303,7 @@ export function listProjectHistory(db: Database, limit = 20): ProjectHistoryReco
   return db
     .prepare(
       `
-        SELECT path, last_used_at, session_count
+        SELECT path, last_used_at, session_count, source
         FROM project_history
         ORDER BY datetime(last_used_at) DESC, path ASC
         LIMIT ?
@@ -288,4 +346,123 @@ export function listPushSubscriptions(db: Database): PushSubscriptionRow[] {
       `,
     )
     .all() as PushSubscriptionRow[];
+}
+
+export function insertSshConnection(db: Database, record: SshConnectionRecord): void {
+  db.prepare(
+    `
+      INSERT INTO ssh_connections (
+        id, name, host, port, username, auth_type,
+        private_key_path, passphrase_encrypted, opencode_provider, opencode_command, created_at, updated_at
+      ) VALUES (
+        @id, @name, @host, @port, @username, @auth_type,
+        @private_key_path, @passphrase_encrypted, @opencode_provider, @opencode_command, @created_at, @updated_at
+      )
+    `,
+  ).run(record);
+}
+
+export function updateSshConnection(
+  db: Database,
+  id: string,
+  updates: Partial<Omit<SshConnectionRecord, 'id' | 'created_at'>>,
+): void {
+  const allowedKeys = ['name', 'host', 'port', 'username', 'auth_type', 'private_key_path', 'passphrase_encrypted', 'opencode_provider', 'opencode_command', 'updated_at'];
+  const entries = Object.entries(updates).filter(([key]) => allowedKeys.includes(key));
+
+  if (entries.length === 0) {
+    return;
+  }
+
+  const setParts = entries.map(([key]) => `${key} = @${key}`);
+  const params: Record<string, unknown> = { id };
+
+  for (const [key, value] of entries) {
+    params[key] = value;
+  }
+
+  db.prepare(`UPDATE ssh_connections SET ${setParts.join(', ')} WHERE id = @id`).run(params);
+}
+
+export function deleteSshConnection(db: Database, id: string): void {
+  db.prepare('DELETE FROM ssh_connections WHERE id = ?').run(id);
+}
+
+export function getSshConnection(db: Database, id: string): SshConnectionRecord | null {
+  const row = db.prepare('SELECT * FROM ssh_connections WHERE id = ?').get(id) as
+    | SshConnectionRecord
+    | undefined;
+
+  if (!row) {
+    return null;
+  }
+
+  // Migrate plaintext passphrase to encrypted format if needed
+  if (row.passphrase_encrypted && !isPassphraseEncrypted(row.passphrase_encrypted)) {
+    const encrypted = encryptPassphrase(row.passphrase_encrypted);
+    db.prepare('UPDATE ssh_connections SET passphrase_encrypted = ? WHERE id = ?').run(
+      encrypted,
+      id,
+    );
+    row.passphrase_encrypted = encrypted;
+  }
+
+  return row;
+}
+
+export function getSshConnectionByName(db: Database, name: string): SshConnectionRecord | null {
+  const row = db.prepare('SELECT * FROM ssh_connections WHERE name = ?').get(name) as
+    | SshConnectionRecord
+    | undefined;
+
+  if (!row) {
+    return null;
+  }
+
+  // Migrate plaintext passphrase to encrypted format if needed
+  if (row.passphrase_encrypted && !isPassphraseEncrypted(row.passphrase_encrypted)) {
+    const encrypted = encryptPassphrase(row.passphrase_encrypted);
+    db.prepare('UPDATE ssh_connections SET passphrase_encrypted = ? WHERE name = ?').run(
+      encrypted,
+      name,
+    );
+    row.passphrase_encrypted = encrypted;
+  }
+
+  return row;
+}
+
+export function listSshConnections(db: Database): SshConnectionRecord[] {
+  const rows = db
+    .prepare('SELECT * FROM ssh_connections ORDER BY name ASC')
+    .all() as SshConnectionRecord[];
+
+  // Migrate any plaintext passphrases to encrypted format
+  for (const row of rows) {
+    if (row.passphrase_encrypted && !isPassphraseEncrypted(row.passphrase_encrypted)) {
+      const encrypted = encryptPassphrase(row.passphrase_encrypted);
+      db.prepare('UPDATE ssh_connections SET passphrase_encrypted = ? WHERE id = ?').run(
+        encrypted,
+        row.id,
+      );
+      row.passphrase_encrypted = encrypted;
+    }
+  }
+
+  return rows;
+}
+
+export function countActiveSessionsForSshConnection(db: Database, sshConnectionId: string): number {
+  const row = db
+    .prepare(
+      `
+        SELECT COUNT(*) as count
+        FROM sessions
+        WHERE ssh_connection_id = ?
+          AND status IN ('starting', 'running')
+      `,
+    )
+    .get(sshConnectionId) as { count: number } | undefined;
+
+  return row?.count ?? 0;
 }

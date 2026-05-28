@@ -7,6 +7,9 @@ export interface SessionInfo {
   cols: number;
   rows: number;
   clientCount: number;
+  backend?: 'tmux' | 'ssh';
+  sshConnectionId?: string;
+  source?: string;
 }
 
 // Path autocomplete
@@ -20,6 +23,22 @@ export interface ProjectHistoryRecord {
   path: string;
   last_used_at: string;
   session_count: number;
+  source?: string | null;
+}
+
+// SSH connection
+export interface SshConnection {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  username: string;
+  authType: 'key' | 'agent';
+  privateKeyPath: string | null;
+  opencodeProvider: 'local' | 'server';
+  opencodeCommand: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // tmux session discovery
@@ -41,4 +60,6 @@ export interface WorkspaceTab {
   attention?: 'question' | 'permission' | 'none';
   permissionId?: string;
   questionId?: string;
+  backend?: 'tmux' | 'ssh';
+  sshConnectionId?: string;
 }
