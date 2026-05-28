@@ -1,26 +1,50 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import type { SessionInfo, WorkspaceTab } from '../lib/types';
-  import { listSessions, getProjectHistory, getTmuxSessions, attachTmuxSession, launchSession, deleteSession } from '../lib/api';
+  import type { SessionInfo, WorkspaceTab, SshConnection } from '../lib/types';
+  import {
+    listSessions,
+    getProjectHistory,
+    getTmuxSessions,
+    attachTmuxSession,
+    launchSession,
+    deleteSession,
+    listSshConnections,
+    checkSshfsAvailability,
+  } from '../lib/api';
   import { workspace } from '../lib/workspace';
   import SessionCard from '../components/SessionCard.svelte';
   import PathAutocomplete from '../components/PathAutocomplete.svelte';
   import SettingsModal from '../components/SettingsModal.svelte';
+  import SshConnectionModal from '../components/SshConnectionModal.svelte';
+  import SshConnectionList from '../components/SshConnectionList.svelte';
 
   let { onopenSession } = $props<{ onopenSession: (tab: WorkspaceTab) => void }>();
 
   let sessions = $state<SessionInfo[]>([]);
   let history = $state<import('../lib/types').ProjectHistoryRecord[]>([]);
   let tmuxSessions = $state<import('../lib/types').TmuxDiscoverySession[]>([]);
+  let sshConnections = $state<SshConnection[]>([]);
   let interval: number;
 
+  let activeTab = $state<'local' | 'ssh'>('local');
   let launchCwd = $state('');
+  let selectedSshConnectionId = $state('');
 
   interface ErrorModal { title: string; message: string; hint: string }
   let errorModal = $state<ErrorModal | null>(null);
   let settingsOpen = $state(false);
   let killTarget = $state<string | null>(null);
   let killing = $state(false);
+
+  let sshModalOpen = $state(false);
+  let sshModalConnection = $state<SshConnection | undefined>(undefined);
+
+  // SSHFS availability check
+  let sshfsStatus = $state<{ available: boolean; path?: string; platform: string } | null>(null);
+  let sshfsChecking = $state(false);
+
+  let localSessions = $derived(sessions.filter(s => !s.sshConnectionId));
+  let sshSessions = $derived(sessions.filter(s => s.sshConnectionId));
 
   function showLimitError() {
     errorModal = {
@@ -32,18 +56,18 @@
 
   async function load() {
     try {
-      const [sessRes, histRes, tmuxRes] = await Promise.all([
+      const [sessRes, histRes, tmuxRes, sshRes] = await Promise.all([
         listSessions(),
         getProjectHistory(),
-        getTmuxSessions()
+        getTmuxSessions(),
+        listSshConnections()
       ]);
       sessions = sessRes;
       history = histRes;
       tmuxSessions = tmuxRes.filter(t => !t.isManaged);
+      sshConnections = sshRes;
     } catch (e) {
       console.error(e);
-    } finally {
-      // intentional
     }
   }
 
@@ -64,15 +88,22 @@
     } catch {
       // intentional
     }
-    return { cols: 220, rows: 50 }; // large default — better too big than too small for TUI
+    return { cols: 220, rows: 50 };
+  }
+
+  async function doLaunch(cwd: string, sshId?: string) {
+    const { cols, rows } = getSavedTermDims();
+    const { session } = await launchSession(cwd, cols, rows, sshId);
+    openSessionTab(session);
+    await load();
   }
 
   async function handleLaunch() {
     if (!launchCwd) return;
     try {
-      const { cols, rows } = getSavedTermDims();
-      const { session } = await launchSession(launchCwd, cols, rows);
-      openSessionTab(session);
+      const sshId = activeTab === 'ssh' ? selectedSshConnectionId || undefined : undefined;
+      await doLaunch(launchCwd, sshId);
+      launchCwd = '';
     } catch (e: unknown) {
       const err = e as Error & { statusCode?: number };
       if (err.statusCode === 409) {
@@ -88,7 +119,6 @@
       const { cols, rows } = getSavedTermDims();
       const res = await attachTmuxSession(name, cols, rows);
       if (res) {
-        // Find it in the newly listed sessions
         await load();
         const s = sessions.find(s => s.id === res.sessionId);
         if (s) openSessionTab(s);
@@ -104,12 +134,18 @@
   }
 
   function openSessionTab(session: SessionInfo) {
+    const sshConn = session.sshConnectionId
+      ? sshConnections.find((c) => c.id === session.sshConnectionId)
+      : undefined;
     onopenSession({
       sessionId: session.id,
       title: session.cwd.split('/').pop() || session.id.slice(0, 8),
       cwd: session.cwd,
       status: session.status,
-      isActive: true
+      isActive: true,
+      backend: session.backend,
+      sshConnectionId: session.sshConnectionId,
+      source: sshConn ? sshConn.name : undefined,
     });
   }
 
@@ -117,7 +153,6 @@
 
   async function confirmKill() {
     if (!killTarget || killing) return;
-
     const targetId = killTarget;
     killing = true;
     try {
@@ -134,6 +169,73 @@
     }
   }
 
+  async function handleHistoryLaunch(proj: import('../lib/types').ProjectHistoryRecord) {
+    let sshId: string | undefined = undefined;
+    if (proj.source && proj.source !== 'local') {
+      // Try to find matching SSH connection
+      const matchingConn = sshConnections.find(c => c.name === proj.source);
+      if (matchingConn) {
+        sshId = matchingConn.id;
+      } else {
+        console.warn(`SSH connection "${proj.source}" no longer exists, launching locally`);
+      }
+    }
+    try {
+      await doLaunch(proj.path, sshId);
+    } catch (e: unknown) {
+      const err = e as Error & { statusCode?: number };
+      if (err.statusCode === 409) {
+        showLimitError();
+      } else {
+        console.error('Failed to launch from history:', e);
+      }
+    }
+  }
+
+  function openSshModal(conn?: SshConnection) {
+    sshModalConnection = conn;
+    sshModalOpen = true;
+  }
+
+  function closeSshModal() {
+    sshModalOpen = false;
+    sshModalConnection = undefined;
+  }
+
+  function onSshSaved() {
+    load();
+  }
+
+  // Check SSHFS availability when SSH tab becomes active
+  async function checkSshfs() {
+    if (sshfsChecking) return;
+    sshfsChecking = true;
+    try {
+      sshfsStatus = await checkSshfsAvailability();
+    } catch (e) {
+      console.error('Failed to check SSHFS availability:', e);
+      sshfsStatus = { available: false, platform: 'unknown' };
+    } finally {
+      sshfsChecking = false;
+    }
+  }
+
+  $effect(() => {
+    if (activeTab === 'ssh') {
+      checkSshfs();
+    }
+  });
+
+  function getSshfsInstallInstructions(platform: string): string {
+    switch (platform) {
+      case 'linux':
+        return 'Linux (Debian/Ubuntu): sudo apt install sshfs\nLinux (RHEL/Fedora): sudo yum install fuse-sshfs';
+      case 'darwin':
+        return 'macOS: brew install macfuse && brew install sshfs';
+      default:
+        return 'Install sshfs for your platform to use Local (SSHFS) mode.';
+    }
+  }
 </script>
 
 <div class="dashboard">
@@ -148,34 +250,150 @@
     </button>
   </header>
 
+  <!-- Environment Tabs -->
+  <div class="env-tabs" role="tablist" aria-label="Environment">
+    <button
+      class="env-tab"
+      class:active={activeTab === 'local'}
+      onclick={() => activeTab = 'local'}
+      role="tab"
+      aria-selected={activeTab === 'local'}
+      aria-controls="local-panel"
+      id="local-tab"
+    >
+      <span class="env-icon">💻</span> LOCAL
+    </button>
+    <button
+      class="env-tab"
+      class:active={activeTab === 'ssh'}
+      onclick={() => activeTab = 'ssh'}
+      role="tab"
+      aria-selected={activeTab === 'ssh'}
+      aria-controls="ssh-panel"
+      id="ssh-tab"
+    >
+      <span class="env-icon">🌐</span> SSH
+    </button>
+  </div>
+
   <main class="dash-grid">
     <div class="dash-col main-col">
-      <section class="panel launch-panel">
-        <h2 class="panel-title">[ LAUNCH ]</h2>
-        <div class="panel-content">
-          <p class="panel-desc">Start a new isolated terminal session in the specified directory.</p>
-          <div class="launch-form">
-            <PathAutocomplete 
-              value={launchCwd} 
-              onchange={(v) => launchCwd = v} 
-              onselect={(v) => { launchCwd = v; }}
-            />
-            <button class="btn primary launch-btn" onclick={handleLaunch}>EXECUTE</button>
-          </div>
-        </div>
-      </section>
-
-      {#if sessions.length > 0}
-        <section class="panel">
-          <h2 class="panel-title">[ ACTIVE_SESSIONS ]</h2>
-          <div class="panel-content grid-cards">
-            {#each sessions as session (session.id)}
-              <SessionCard
-                {session}
-                onConnect={() => openSessionTab(session)}
-                onKill={(id) => killTarget = id}
+      {#if activeTab === 'local'}
+        <!-- Local Tab Content -->
+        <section class="panel launch-panel">
+          <h2 class="panel-title">[ LAUNCH ]</h2>
+          <div class="panel-content">
+            <p class="panel-desc">Start a new isolated terminal session in the specified directory.</p>
+            <div class="launch-form">
+              <PathAutocomplete
+                value={launchCwd}
+                onchange={(v: string) => launchCwd = v}
+                onselect={(v: string) => { launchCwd = v; }}
               />
-            {/each}
+              <button class="btn primary launch-btn" onclick={handleLaunch}>EXECUTE</button>
+            </div>
+          </div>
+        </section>
+
+        {#if localSessions.length > 0}
+          <section class="panel">
+            <h2 class="panel-title">[ ACTIVE_SESSIONS ]</h2>
+            <div class="panel-content grid-cards">
+              {#each localSessions as session (session.id)}
+                <SessionCard
+                  {session}
+                  onConnect={() => openSessionTab(session)}
+                  onKill={(id: string) => killTarget = id}
+                />
+              {/each}
+            </div>
+          </section>
+        {/if}
+      {:else}
+        <!-- SSH Tab Content -->
+        <section class="panel launch-panel ssh-launch-panel">
+          <h2 class="panel-title">[ LAUNCH_REMOTE ]</h2>
+          <div class="panel-content">
+            <p class="panel-desc">Launch a terminal session on a remote server via SSH.</p>
+            <div class="launch-form ssh-launch-form">
+              <select
+                class="ssh-select"
+                bind:value={selectedSshConnectionId}
+                aria-label="SSH connection"
+              >
+                <option value="">Select connection...</option>
+                {#each sshConnections as conn (conn.id)}
+                  <option value={conn.id}>
+                    {conn.name} ({conn.username}@{conn.host}) — {conn.opencodeProvider === 'local' ? 'Local' : 'Server'}
+                  </option>
+                {/each}
+              </select>
+              <PathAutocomplete
+                value={launchCwd}
+                onchange={(v: string) => launchCwd = v}
+                onselect={(v: string) => { launchCwd = v; }}
+                sshConnectionId={activeTab === 'ssh' ? selectedSshConnectionId || undefined : undefined}
+              />
+              <button
+                class="btn primary launch-btn"
+                onclick={handleLaunch}
+                disabled={!selectedSshConnectionId}
+              >
+                EXECUTE
+              </button>
+            </div>
+            <button class="btn manage-conn-btn" onclick={() => openSshModal()}>
+              + NEW CONNECTION
+            </button>
+          </div>
+        </section>
+
+        {#if sshfsStatus && !sshfsStatus.available}
+          <section class="panel sshfs-banner-panel">
+            <div class="panel-content">
+              <div class="sshfs-banner" role="alert">
+                <div class="sshfs-banner-header">
+                  <span class="sshfs-banner-icon">⚠️</span>
+                  <span class="sshfs-banner-title">SSHFS is not installed on this machine.</span>
+                </div>
+                <p class="sshfs-banner-text">
+                  Local (SSHFS) mode will not be available.
+                </p>
+                <div class="sshfs-banner-instructions">
+                  <p class="sshfs-banner-subtitle">Install instructions:</p>
+                  <pre class="sshfs-install-cmd">{getSshfsInstallInstructions(sshfsStatus.platform)}</pre>
+                </div>
+              </div>
+            </div>
+          </section>
+        {/if}
+
+        {#if sshSessions.length > 0}
+          <section class="panel">
+            <h2 class="panel-title">[ ACTIVE_SSH_SESSIONS ]</h2>
+            <div class="panel-content grid-cards">
+              {#each sshSessions as session (session.id)}
+                <SessionCard
+                  {session}
+                  onConnect={() => openSessionTab(session)}
+                  onKill={(id: string) => killTarget = id}
+                />
+              {/each}
+            </div>
+          </section>
+        {/if}
+
+        <section class="panel">
+          <h2 class="panel-title">[ SAVED_CONNECTIONS ]</h2>
+          <div class="panel-content">
+            <SshConnectionList
+              connections={sshConnections}
+              onEdit={(conn) => openSshModal(conn)}
+              onRefresh={load}
+            />
+            <button class="btn manage-conn-btn bottom" onclick={() => openSshModal()}>
+              + NEW CONNECTION
+            </button>
           </div>
         </section>
       {/if}
@@ -187,16 +405,23 @@
           <h2 class="panel-title">[ RECENT_PROJECTS ]</h2>
           <div class="panel-content list-compact">
             {#each history as proj}
-              <div class="list-item">
+              <div class="list-item history-item">
                 <span class="path-text" title={proj.path}>{proj.path}</span>
-                <button class="btn btn-small" onclick={() => { launchCwd = proj.path; handleLaunch(); }}>INIT</button>
+                <div class="history-actions">
+                  {#if proj.source && proj.source !== 'local'}
+                    <span class="source-badge ssh-source">{proj.source}</span>
+                  {:else}
+                    <span class="source-badge local-source">local</span>
+                  {/if}
+                  <button class="btn btn-small init-btn" onclick={async () => await handleHistoryLaunch(proj)}>INIT</button>
+                </div>
               </div>
             {/each}
           </div>
         </section>
       {/if}
 
-      {#if tmuxSessions.length > 0}
+      {#if activeTab === 'local' && tmuxSessions.length > 0}
         <section class="panel">
           <h2 class="panel-title">[ TMUX_DISCOVERY ]</h2>
           <div class="panel-content list-compact">
@@ -243,6 +468,13 @@
   {/if}
 
   <SettingsModal open={settingsOpen} onClose={() => settingsOpen = false} />
+
+  <SshConnectionModal
+    open={sshModalOpen}
+    connection={sshModalConnection}
+    onClose={closeSshModal}
+    onSaved={onSshSaved}
+  />
 </div>
 
 <style>
@@ -253,9 +485,9 @@
     box-sizing: border-box;
     overflow-x: hidden;
   }
-  
+
   .dash-header {
-    margin-bottom: var(--space-6);
+    margin-bottom: var(--space-4);
     padding-bottom: var(--space-3);
     border-bottom: 1px solid var(--border-accent);
     display: flex;
@@ -310,6 +542,44 @@
     text-shadow: 0 0 10px rgba(88, 166, 255, 0.3);
   }
 
+  /* Environment Tabs */
+  .env-tabs {
+    display: flex;
+    gap: var(--space-2);
+    margin-bottom: var(--space-6);
+    border-bottom: 1px solid var(--border-default);
+  }
+
+  .env-tab {
+    padding: var(--space-2) var(--space-4);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: color var(--transition-fast), border-color var(--transition-fast);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .env-tab:hover {
+    color: var(--text-secondary);
+  }
+
+  .env-tab.active {
+    color: var(--accent-blue);
+    border-bottom-color: var(--accent-blue);
+  }
+
+  .env-icon {
+    font-size: var(--font-size-sm);
+  }
+
   .dash-grid {
     display: grid;
     grid-template-columns: 2fr 1fr;
@@ -360,6 +630,15 @@
     border-bottom-color: var(--accent-green);
   }
 
+  .ssh-launch-panel {
+    border-color: var(--accent-cyan);
+  }
+  .ssh-launch-panel .panel-title {
+    background: rgba(34, 211, 238, 0.1);
+    color: var(--accent-cyan);
+    border-bottom-color: var(--accent-cyan);
+  }
+
   .panel-desc {
     color: var(--text-secondary);
     margin-bottom: var(--space-4);
@@ -372,6 +651,55 @@
     align-items: center;
     width: 100%;
     box-sizing: border-box;
+  }
+
+  .ssh-launch-form {
+    flex-wrap: wrap;
+  }
+
+  .ssh-select {
+    background: var(--bg-base);
+    border: 1px solid var(--border-default);
+    color: var(--text-primary);
+    padding: var(--space-2) var(--space-3);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-sm);
+    border-radius: 0;
+    outline: none;
+    min-width: 200px;
+    flex-shrink: 0;
+  }
+
+  .ssh-select:focus {
+    border-color: var(--accent-cyan);
+  }
+
+  .ssh-select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  .manage-conn-btn {
+    margin-top: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    background: transparent;
+    border: 1px solid var(--border-default);
+    color: var(--text-muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    letter-spacing: 1px;
+    cursor: pointer;
+    border-radius: 0;
+  }
+
+  .manage-conn-btn:hover {
+    border-color: var(--accent-cyan);
+    color: var(--accent-cyan);
+  }
+
+  .manage-conn-btn.bottom {
+    margin-top: var(--space-4);
+    width: 100%;
   }
 
   .launch-btn {
@@ -403,10 +731,17 @@
     transition: border-color var(--transition-fast);
     min-width: 0;
   }
-  
+
   .list-item:hover {
     border-color: var(--border-default);
     background: var(--bg-elevated);
+  }
+
+  .history-item {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-3);
   }
 
   .path-text {
@@ -418,6 +753,35 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     max-width: 100%;
+    direction: rtl;
+    text-align: left;
+  }
+
+  .source-badge {
+    font-size: var(--font-size-xs);
+    padding: 1px 6px;
+    font-family: var(--font-mono);
+    border: 1px solid;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .history-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .local-source {
+    color: var(--text-muted);
+    border-color: var(--border-muted);
+    background: var(--bg-base);
+  }
+
+  .ssh-source {
+    color: var(--accent-cyan);
+    border-color: var(--accent-cyan);
+    background: rgba(34, 211, 238, 0.1);
   }
 
   .tmux-name {
@@ -435,23 +799,57 @@
     font-size: var(--font-size-xs);
   }
 
+  .init-btn {
+    padding: 2px var(--space-2);
+    background: var(--bg-elevated);
+    border: 1px solid var(--accent-green);
+    color: var(--accent-green);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-weight: 600;
+    letter-spacing: 1px;
+    cursor: pointer;
+    border-radius: 3px;
+    transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+    flex-shrink: 0;
+  }
+
+  .init-btn:hover {
+    background: rgba(63, 185, 80, 0.15);
+    border-color: var(--accent-green);
+    color: var(--accent-green);
+  }
+
   @media (max-width: 640px) {
     .dashboard {
       padding: var(--space-3) var(--space-3);
     }
-    
+
     .launch-form {
       flex-direction: column;
       align-items: stretch;
     }
-    
+
+    .ssh-launch-form {
+      flex-direction: column;
+    }
+
+    .ssh-select {
+      width: 100%;
+      min-width: auto;
+    }
+
     .launch-btn {
       width: 100%;
       justify-content: center;
     }
-    
+
     .grid-cards {
       grid-template-columns: 1fr;
+    }
+
+    .history-actions {
+      flex-wrap: wrap;
     }
   }
 
@@ -564,6 +962,63 @@
     cursor: not-allowed;
   }
 
+  /* SSHFS availability banner */
+  .sshfs-banner-panel {
+    border-color: var(--accent-yellow, #d29922);
+  }
+
+  .sshfs-banner {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .sshfs-banner-header {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .sshfs-banner-icon {
+    font-size: var(--font-size-md);
+  }
+
+  .sshfs-banner-title {
+    font-weight: 600;
+    color: var(--accent-yellow, #d29922);
+    font-size: var(--font-size-sm);
+  }
+
+  .sshfs-banner-text {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+  }
+
+  .sshfs-banner-instructions {
+    background: var(--bg-base);
+    border: 1px solid var(--border-muted);
+    padding: var(--space-3);
+    margin-top: var(--space-1);
+  }
+
+  .sshfs-banner-subtitle {
+    margin: 0 0 var(--space-2) 0;
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .sshfs-install-cmd {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    line-height: 1.6;
+    white-space: pre-wrap;
+  }
+
   @media (max-width: 768px) {
     button:hover,
     button:focus,
@@ -574,7 +1029,9 @@
     .btn-settings:hover,
     .btn-settings:focus,
     .btn-settings:focus-visible,
-    .list-item:hover {
+    .list-item:hover,
+    .env-tab:hover,
+    .manage-conn-btn:hover {
       outline: none;
       background: inherit;
       color: inherit;

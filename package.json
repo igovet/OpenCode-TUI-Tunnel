@@ -5,7 +5,7 @@
     "email": "igovet@gmail.com",
     "url": "https://vetrov.dev"
   },
-  "version": "0.1.9",
+  "version": "0.2.0",
   "description": "Web terminal multiplexer for opencode TUI sessions — access your opencode processes from any browser",
   "keywords": [
     "opencode",
@@ -58,11 +58,13 @@
     "node-pty": "^1.1.0",
     "semver": "^7.7.4",
     "sharp": "^0.34.5",
+    "ssh2": "^1.16.0",
     "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.0.0",
     "@types/node": "^25.5.2",
+    "@types/ssh2": "^1.15.5",
     "@types/web-push": "^3.6.4",
     "@typescript-eslint/eslint-plugin": "^8.58.0",
     "@typescript-eslint/parser": "^8.58.0",

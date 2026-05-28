@@ -5,6 +5,52 @@ All notable changes to this project are documented here.
 ---
 
 <details open>
+<summary><strong>v0.2.0</strong> — 2026-05-28</summary>
+
+### 🎯 Features
+
+- **SSH remote connection support** — manage and launch terminal sessions on remote servers via SSH
+- **Environment switcher** on main page (Local / SSH tabs)
+- **SSH key-based and agent-based authentication** for remote connections
+- **Visual distinction** for SSH sessions in session list and workspace tabs
+- **Project history** now shows source (local or SSH connection)
+
+### 📡 Infrastructure
+
+- New `ssh2` dependency for SSH connectivity
+- Database schema extended with `ssh_connections` table
+
+### 🔒 Security
+
+- **SSH key passphrases now encrypted at rest** using AES-256-GCM with machine-specific key
+- **Rate limiting** on SSH connection test endpoint (5 requests/minute per IP)
+
+### 🔧 Bug Fixes
+
+- **Workspace tabs now correctly persist SSH context** across page reloads
+
+### Features
+
+- SSHFS support — mount remote directories locally and run opencode against them
+- Per-SSH-connection opencode provider switcher (Server / Local via SSHFS)
+- Custom opencode command per SSH connection for server mode (e.g., `npx opencode`)
+- SSHFS availability detection with platform-aware English install instructions
+- Doctor command now checks for sshfs availability
+- Mount lifecycle hardening — stale mount cleanup on startup, active mount cleanup on shutdown
+
+### UI
+
+- Provider mode toggle in SSH connection modal (Server / Local SSHFS)
+- SSHFS availability banner with install instructions on SSH tab
+- Provider mode badges on session cards ("🌐 Server" / "📁 Local (SSHFS)")
+
+### Bug Fixes
+
+- `GET /api/ssh/connections` now returns camelCase property names (consistent with other endpoints)
+
+</details>
+
+<details>
 <summary><strong>v0.1.9</strong> — 2026-05-13</summary>
 
 ### 🔧 Bug Fixes

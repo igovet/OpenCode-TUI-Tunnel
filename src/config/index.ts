@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'n
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-const CONFIG_VERSION = 2;
+const CONFIG_VERSION = 3;
 
 export interface AppConfig {
   configVersion: number;
@@ -47,6 +47,12 @@ export interface AppConfig {
     vapidSubject: string;
     vapidPublicKey: string;
     vapidPrivateKey: string;
+  };
+  ssh: {
+    defaultKeyPath: string;
+    connectionTimeoutMs: number;
+    keepAliveIntervalMs: number;
+    agentForwarding: boolean;
   };
 }
 
@@ -129,6 +135,12 @@ export function getDefaultConfig(): AppConfig {
       vapidSubject: 'mailto:admin@localhost',
       vapidPublicKey: '',
       vapidPrivateKey: '',
+    },
+    ssh: {
+      defaultKeyPath: '~/.ssh/id_rsa',
+      connectionTimeoutMs: 30000,
+      keepAliveIntervalMs: 30000,
+      agentForwarding: false,
     },
   };
 }

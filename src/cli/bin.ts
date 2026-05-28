@@ -402,6 +402,35 @@ program
       message: `tmux ${tmuxInfo.detail}`,
     });
 
+    const sshfsInfo = await (async (): Promise<{ ok: boolean; detail: string }> => {
+      try {
+        const { stdout } = await execFileAsync('sshfs', ['--version']);
+        const detail = stdout.trim();
+        return { ok: true, detail };
+      } catch {
+        return { ok: false, detail: 'not found' };
+      }
+    })();
+
+    if (sshfsInfo.ok) {
+      checks.push({
+        ok: true,
+        message: `sshfs ${sshfsInfo.detail}`,
+      });
+    } else {
+      const platform = process.platform;
+      let installInstructions: string;
+      if (platform === 'darwin') {
+        installInstructions = 'brew install macfuse && brew install sshfs';
+      } else {
+        installInstructions = 'sudo apt install sshfs  (Debian/Ubuntu) or sudo yum install fuse-sshfs  (RHEL/Fedora)';
+      }
+      checks.push({
+        ok: true, // non-blocking: sshfs is optional
+        message: `sshfs not found in PATH  (install: ${installInstructions})`,
+      });
+    }
+
     const opencodePath = await commandPath('opencode');
     checks.push({
       ok: opencodePath !== null,

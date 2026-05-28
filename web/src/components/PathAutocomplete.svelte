@@ -1,16 +1,38 @@
 <script lang="ts">
   import { suggestPaths } from '../lib/api';
 
-  let { value = '', onchange, onselect } = $props<{
+  let { value = '', onchange, onselect, sshConnectionId } = $props<{
     value: string;
     onchange: (val: string) => void;
     onselect?: (val: string) => void;
+    sshConnectionId?: string;
   }>();
 
   let suggestions = $state<string[]>([]);
   let activeIndex = $state(-1);
   let showSuggestions = $state(false);
   let debounceTimer: number;
+
+  // Clear and reload suggestions when sshConnectionId changes
+  $effect(() => {
+    // Reference sshConnectionId to create reactive dependency
+    const trackedId = sshConnectionId;
+    suggestions = [];
+    showSuggestions = false;
+    activeIndex = -1;
+    clearTimeout(debounceTimer);
+    if (value) {
+      debounceTimer = window.setTimeout(async () => {
+        try {
+          suggestions = await suggestPaths(value, trackedId);
+          showSuggestions = suggestions.length > 0;
+        } catch {
+          suggestions = [];
+          showSuggestions = false;
+        }
+      }, 150);
+    }
+  });
 
   function handleInput(e: Event) {
     const val = (e.target as HTMLInputElement).value;
@@ -25,7 +47,7 @@
 
     debounceTimer = window.setTimeout(async () => {
       try {
-        suggestions = await suggestPaths(val);
+        suggestions = await suggestPaths(val, sshConnectionId);
         showSuggestions = suggestions.length > 0;
         activeIndex = -1;
       } catch {

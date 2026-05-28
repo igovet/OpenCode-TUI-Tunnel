@@ -66,6 +66,8 @@
           cwd: session.cwd,
           status: session.status,
           attention: 'none',
+          backend: session.backend,
+          sshConnectionId: session.sshConnectionId,
         });
       } catch (error) {
         console.error('[notifications] Failed to open requested session', error);
