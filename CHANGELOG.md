@@ -5,6 +5,40 @@ All notable changes to this project are documented here.
 ---
 
 <details open>
+<summary><strong>v0.2.1</strong> — 2026-05-29</summary>
+
+### 🎯 Features
+
+- **Remote tmux session discovery and attach** — SSH tab now shows all running tmux sessions on the remote server, not just ones launched by this app. Users can attach to any existing tmux session directly from the "REMOTE TMUX DISCOVERY" panel.
+
+### 🔧 Bug Fixes
+
+- **Clipboard copy in SSH mode (multi-part fix).** Fixed text selection and copying in SSH sessions through three coordinated changes:
+
+  - **Backend:** Server now unconditionally strips xterm mouse tracking sequences (`\x1b[?1003h`/`\x1b[?1003l`) for ALL sessions (local and SSH) to fix xterm.js selection returning 0 with DECSET 1003. Native browser text selection and copy work for all session types; TUI hover effects are disabled.
+
+  - **Frontend:** Replaced `terminal.hasSelection()` with `terminal.getSelection()` in copy handlers. When xterm.js mouse tracking mode (DECSET 1003) is active, `hasSelection()` incorrectly returns `false` even when text is selected, causing the copy handler to skip writing to clipboard.
+
+  - **Frontend (final fix):** Replaced the deprecated `document.execCommand('copy')` in the keyboard copy handler with `navigator.clipboard.writeText()`. The fix also removes `event.preventDefault()` to allow the native copy event to fire, enabling the existing `handleCopyEvent` synchronous fallback via `clipboardData.setData()`.
+
+  - **Copy-on-select:** Added `navigator.clipboard.writeText()` to the `onSelectionChange` handler in `TerminalManager`. Mouse-selected text in SSH TUI sessions is now immediately copied to the browser's local clipboard, bypassing the limitation where xterm.js mouse tracking mode (DECSET 1003) defers copy to the remote host program.
+
+  - **Clipboard copy robustness (final fix):** Complete rewrite of clipboard handling with a robust three-strategy cascading fallback system (`clipboardData.setData()` → `document.execCommand('copy')` with hidden textarea → `navigator.clipboard.writeText()`). Added `mouseup` listener for copy-on-select to avoid flooding the clipboard API during drag selection. Replaced `onSelectionChange` clipboard write with `mouseup` for stronger, more stable user gesture context. Added debug logging to help diagnose clipboard issues in production.
+
+  - **SSH tmux session name quoting:** Fixed proper quoting and escaping for tmux session names in `attachRemotePty`. Session names containing spaces, `$`, backticks, or other shell metacharacters are now safely passed to tmux by wrapping in double quotes and escaping embedded double quotes.
+
+  - **Remote tmux auto-refresh removed:** Removed 15-second auto-refresh interval for remote tmux session discovery. Users must now manually click the reload button (↻) to refresh remote tmux sessions.
+
+### 🎨 UI/UX
+
+- **TMUX_DISCOVERY panel repositioned** to the left column (main-col) in the SSH tab, appearing after the launch panel. Panel renamed from `[ REMOTE TMUX SESSIONS ]` to `[ TMUX_DISCOVERY ]` for consistency.
+- **Remote session polling** now uses a dedicated 15-second interval (vs. 3 seconds for local sessions) to reduce server load.
+- **All SSH connections** now display their tmux sessions simultaneously, grouped by connection name.
+- **Reload button** (↻) added to TMUX_DISCOVERY panel for manual session refresh.
+
+</details>
+
+<details>
 <summary><strong>v0.2.0</strong> — 2026-05-28</summary>
 
 ### 🎯 Features

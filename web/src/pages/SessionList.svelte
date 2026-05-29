@@ -10,6 +10,8 @@
     deleteSession,
     listSshConnections,
     checkSshfsAvailability,
+    getRemoteTmuxSessions,
+    attachRemoteTmuxSession,
   } from '../lib/api';
   import { workspace } from '../lib/workspace';
   import SessionCard from '../components/SessionCard.svelte';
@@ -23,6 +25,8 @@
   let sessions = $state<SessionInfo[]>([]);
   let history = $state<import('../lib/types').ProjectHistoryRecord[]>([]);
   let tmuxSessions = $state<import('../lib/types').TmuxDiscoverySession[]>([]);
+  let remoteTmuxSessions = $state<Map<string, import('../lib/types').TmuxDiscoverySession[]>>(new Map());
+  let remoteTmuxLoading = $state(false);
   let sshConnections = $state<SshConnection[]>([]);
   let interval: number;
 
@@ -71,8 +75,34 @@
     }
   }
 
+  // Load remote tmux sessions for all SSH connections (slower refresh)
+  async function loadRemoteTmuxSessions() {
+    if (sshConnections.length === 0) return;
+    remoteTmuxLoading = true;
+    try {
+      const results = await Promise.all(
+        sshConnections.map(conn => getRemoteTmuxSessions(conn.id))
+      );
+      const newMap = new Map<string, import('../lib/types').TmuxDiscoverySession[]>();
+      sshConnections.forEach((conn, idx) => {
+        newMap.set(conn.id, results[idx].filter(t => !t.isManaged));
+      });
+      remoteTmuxSessions = newMap;
+    } catch (e) {
+      console.error('Failed to load remote tmux sessions:', e);
+    } finally {
+      remoteTmuxLoading = false;
+    }
+  }
+
+  // Manual reload function for remote tmux sessions
+  async function reloadRemoteTmuxSessions() {
+    await loadRemoteTmuxSessions();
+  }
+
   onMount(() => {
     load();
+    loadRemoteTmuxSessions();
     interval = window.setInterval(load, 3000);
   });
 
@@ -118,6 +148,25 @@
     try {
       const { cols, rows } = getSavedTermDims();
       const res = await attachTmuxSession(name, cols, rows);
+      if (res) {
+        await load();
+        const s = sessions.find(s => s.id === res.sessionId);
+        if (s) openSessionTab(s);
+      }
+    } catch (e: unknown) {
+      const err = e as Error & { statusCode?: number };
+      if (err.statusCode === 409) {
+        showLimitError();
+      } else {
+        console.error(e);
+      }
+    }
+  }
+
+  async function handleRemoteAttach(name: string, sshConnectionId: string) {
+    try {
+      const { cols, rows } = getSavedTermDims();
+      const res = await attachRemoteTmuxSession(sshConnectionId, name, cols, rows);
       if (res) {
         await load();
         const s = sessions.find(s => s.id === res.sessionId);
@@ -348,6 +397,39 @@
           </div>
         </section>
 
+        <!-- TMUX Discovery for all SSH connections -->
+        <section class="panel">
+          <h2 class="panel-title">
+            [ TMUX_DISCOVERY ]
+            <button class="btn btn-small reload-btn" onclick={reloadRemoteTmuxSessions} aria-label="Reload remote tmux sessions">
+              ↻
+            </button>
+          </h2>
+          <div class="panel-content list-compact">
+            {#if remoteTmuxLoading}
+              <div class="list-item"><span class="dim">Loading remote sessions...</span></div>
+            {:else}
+              {#each sshConnections as conn (conn.id)}
+                {@const connSessions = remoteTmuxSessions.get(conn.id) ?? []}
+                {#if connSessions.length > 0}
+                  <div class="conn-group">
+                    <div class="conn-group-header">{conn.name}</div>
+                    {#each connSessions as ts}
+                      <div class="list-item">
+                        <span class="tmux-name">{ts.name} <span class="dim">({ts.windows}w)</span></span>
+                        <button class="btn btn-small" onclick={() => handleRemoteAttach(ts.name, conn.id)}>ATTACH</button>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              {/each}
+              {#if ![...remoteTmuxSessions.values()].some(sessions => sessions.length > 0)}
+                <div class="list-item"><span class="dim">No remote tmux sessions found</span></div>
+              {/if}
+            {/if}
+          </div>
+        </section>
+
         {#if sshfsStatus && !sshfsStatus.available}
           <section class="panel sshfs-banner-panel">
             <div class="panel-content">
@@ -434,6 +516,7 @@
           </div>
         </section>
       {/if}
+
     </div>
   </main>
 
@@ -480,6 +563,7 @@
 <style>
   .dashboard {
     width: 100%;
+    min-height: 100%;
     padding: var(--space-4) var(--space-6);
     font-family: var(--font-mono);
     box-sizing: border-box;
@@ -792,6 +876,42 @@
   .dim {
     color: var(--text-muted);
     font-weight: 400;
+  }
+
+  .conn-group {
+    margin-bottom: var(--space-2);
+  }
+
+  .conn-group-header {
+    font-size: var(--font-size-xs);
+    color: var(--text-secondary);
+    padding: var(--space-1) var(--space-2);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid var(--border-muted);
+    margin-bottom: var(--space-1);
+  }
+
+  .panel-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .reload-btn {
+    padding: 0 6px;
+    font-size: var(--font-size-sm);
+    background: transparent;
+    border: 1px solid var(--border-default);
+    color: var(--text-muted);
+    cursor: pointer;
+    border-radius: 2px;
+    line-height: 1;
+  }
+
+  .reload-btn:hover {
+    border-color: var(--accent-cyan);
+    color: var(--accent-cyan);
   }
 
   .btn-small {

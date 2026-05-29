@@ -450,6 +450,7 @@ export async function killRemoteSession(
 export async function listRemoteTunnelSessions(
   record: SshConnectionRecord,
   config: AppConfig,
+  filterPrefix?: string | null,
 ): Promise<Array<{ name: string; created: string; windows: number; attached: number; id: string }>> {
   const client = await connectSshClient(record, config);
 
@@ -465,8 +466,9 @@ export async function listRemoteTunnelSessions(
       client.once('end', onDone);
       client.once('close', onDone);
 
+      const tab = '\t';
       client.exec(
-        `tmux list-sessions -F '#{session_name}\\t#{session_created}\\t#{session_windows}\\t#{session_attached}\\t#{session_id}'`,
+        `tmux list-sessions -F '#{session_name}${tab}#{session_created}${tab}#{session_windows}${tab}#{session_attached}${tab}#{session_id}'`,
         (error, channel) => {
           if (error) {
             client.removeListener('end', onDone);
@@ -501,7 +503,11 @@ export async function listRemoteTunnelSessions(
                   id,
                 };
               })
-              .filter((session) => session.name.startsWith('oct-'));
+              .filter((session) => {
+                if (filterPrefix === null) return true;
+                const prefix = filterPrefix ?? 'oct-';
+                return session.name.startsWith(prefix);
+              });
 
             cleanupAndResolve(sessions);
           });
@@ -521,7 +527,11 @@ export async function listRemoteTunnelSessions(
                   id,
                 };
               })
-              .filter((session) => session.name.startsWith('oct-'));
+              .filter((session) => {
+                if (filterPrefix === null) return true;
+                const prefix = filterPrefix ?? 'oct-';
+                return session.name.startsWith(prefix);
+              });
 
             cleanupAndResolve(sessions);
           });
@@ -547,7 +557,7 @@ export function attachRemotePty(
 
     client.once('ready', () => {
       client.exec(
-        `tmux attach-session -t ${tmuxName}`,
+        `tmux attach-session -t "${tmuxName.replace(/"/g, '\\"')}"`,
         {
           pty: {
             cols,

@@ -35,7 +35,7 @@ import {
   listAllTmuxSessions,
   type TmuxPtyHandle,
 } from '../tmux/adapter.js';
-import { connectSshClient, testSshConnection } from '../ssh/adapter.js';
+import { attachRemotePty, connectSshClient, listRemoteTunnelSessions, testSshConnection } from '../ssh/adapter.js';
 import {
   checkSshfsAvailable,
   cleanupStaleMounts,
@@ -792,6 +792,92 @@ function setupRoutes(
     };
   });
 
+  app.get<{ Params: { id: string } }>('/api/ssh/connections/:id/tmux-sessions', async (request, reply) => {
+    const connection = getSshConnection(db, request.params.id);
+    if (!connection) {
+      return reply.code(404).send({ error: 'SSH connection not found' });
+    }
+
+    try {
+      const sessions = await listRemoteTunnelSessions(connection, config, null);
+      return { sessions };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to list remote tmux sessions';
+      return reply.code(502).send({ error: message });
+    }
+  });
+
+  app.post<{
+    Params: { id: string; name: string };
+    Body: { cols?: unknown; rows?: unknown };
+  }>('/api/ssh/connections/:id/tmux-sessions/:name/attach', async (request, reply) => {
+    const connection = getSshConnection(db, request.params.id);
+    if (!connection) {
+      return reply.code(404).send({ error: 'SSH connection not found' });
+    }
+
+    const name = request.params.name?.trim();
+    if (!name) {
+      return reply.code(400).send({ error: 'Session name is required' });
+    }
+
+    const body = request.body;
+    if (body !== undefined && (typeof body !== 'object' || body === null || Array.isArray(body))) {
+      return reply.code(400).send({ error: 'Request body must be an object' });
+    }
+
+    const cols = toPositiveInt(body?.cols, config.sessions.defaultCols);
+    const rows = toPositiveInt(body?.rows, config.sessions.defaultRows);
+
+    let probeHandle: TmuxPtyHandle | null = null;
+
+    try {
+      probeHandle = await attachRemotePty(connection, config, name, cols, rows);
+
+      const nowIso = new Date().toISOString();
+      const sessionId = randomUUID();
+
+      insertSession(db, {
+        id: sessionId,
+        backend: 'ssh',
+        status: 'running',
+        cwd: '/',
+        command_json: JSON.stringify({ source: 'attach', tmuxSessionName: name }),
+        pid: null,
+        tmux_session_name: name,
+        cols,
+        rows,
+        started_at: nowIso,
+        ended_at: null,
+        exit_code: null,
+        last_seq: 0,
+        reconnectable: 1,
+        interrupted_reason: null,
+        ssh_connection_id: connection.id,
+      });
+
+      logEvent(db, sessionId, 'session_attached_existing_tmux', { name, cols, rows, sshConnectionId: connection.id });
+      supervisor.get(sessionId);
+
+      return reply.code(201).send({
+        sessionId,
+        streamUrl: `/api/sessions/${sessionId}/stream`,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to attach to remote tmux session';
+      const statusCode = /no server running|failed to connect|can't find session/i.test(message)
+        ? 404
+        : 500;
+      return reply.code(statusCode).send({ error: message });
+    } finally {
+      try {
+        probeHandle?.close();
+      } catch {
+        // best-effort cleanup
+      }
+    }
+  });
+
   app.put<{ Params: { id: string }; Body: Record<string, unknown> }>(
     '/api/ssh/connections/:id',
     async (request, reply) => {
@@ -1099,7 +1185,9 @@ function setupRoutes(
         try {
           const raw = Buffer.isBuffer(data) ? data : Buffer.from(data as string, 'utf8');
 
-          // Strip OpenTUI any-event mouse tracking toggles to prevent xterm.js hover redraw flicker.
+          // Strip any-event mouse tracking sequences (DECSET 1003) from all sessions to
+          // ensure xterm.js selection works correctly. When mouse tracking is active,
+          // xterm.js onSelectionChange returns 0 and copy doesn't work.
           const output = decoder
             .write(raw)
             .replaceAll('\x1b[?1003h', '')
