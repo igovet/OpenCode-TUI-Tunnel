@@ -117,8 +117,11 @@ export class TerminalManager {
   private _handleVisibilityChange?: () => void;
   private _xtermTextarea: HTMLTextAreaElement | null = null;
   private _originalTextareaFocus: (() => void) | null = null;
-  private _selectionChangeDisposable: { dispose(): void } | null = null;
   private _copyListener: ((event: ClipboardEvent) => void) | null = null;
+  private _mouseupListener: ((event: MouseEvent) => void) | null = null;
+  private _selectionChangeDocumentListener: (() => void) | null = null;
+  private _mousedownListener: (() => void) | null = null;
+  private _contextMenuListener: (() => void) | null = null;
   private _writeParsedDisposable: { dispose(): void } | null = null;
   private _textareaFocusChangeRegistrations = new Set<TextareaFocusChangeRegistration>();
   private _textareaInputRegistrations = new Set<TextareaInputRegistration>();
@@ -171,10 +174,6 @@ export class TerminalManager {
       return this.handleDefaultCustomKeyEvent(event);
     });
 
-    this._selectionChangeDisposable = this.terminal.onSelectionChange(() => {
-      this.selectedText = this.terminal.getSelection();
-    });
-
     this.terminal.onData((data) => this.onData(data));
     this._writeParsedDisposable = this.terminal.onWriteParsed(() => {
       if (!this.pinnedToBottom) {
@@ -212,9 +211,16 @@ export class TerminalManager {
       (event.key === 'c' || event.key === 'C') &&
       (event.ctrlKey || event.metaKey);
 
-    if (isCopyShortcut && this.terminal.hasSelection()) {
-      event.preventDefault();
-      void this.copySelectionToClipboard();
+    // Use getSelectedText() instead of hasSelection() because hasSelection()
+    // returns false when xterm.js mouse tracking (DECSET 1003) is active, even
+    // if text is selected. getSelectedText() falls back to the browser's native
+    // DOM selection which correctly captures the text in all modes.
+    if (isCopyShortcut && this.getSelectedText()) {
+      // Don't call preventDefault() — let the browser fire the native copy event.
+      // Returning false prevents xterm.js from sending Ctrl+C to the remote PTY,
+      // while the copy event allows handleCopyEvent to use the synchronous
+      // clipboardData.setData() API, which is more reliable than the async
+      // navigator.clipboard.writeText() that can fail silently.
       return false;
     }
 
@@ -252,6 +258,16 @@ export class TerminalManager {
     }
 
     return true;
+  }
+
+  /**
+   * Get selected text from xterm.js or fall back to the browser's native
+   * DOM selection. xterm's getSelection() can return empty when DECSET 1003
+   * (mouse tracking) is active, but window.getSelection() still captures
+   * the text because xterm renders selected text as actual DOM ranges.
+   */
+  private getSelectedText(): string {
+    return this.terminal.getSelection() || window.getSelection()?.toString() || '';
   }
 
   attachCustomKeyEventHandler(handler: (event: KeyboardEvent) => boolean): void {
@@ -342,14 +358,134 @@ export class TerminalManager {
       this.handleCopyEvent(event);
     };
     this.element.addEventListener('copy', this._copyListener);
+
+    // Document-level copy event listener as fallback when element-level copy doesn't fire
+    document.addEventListener('copy', (event) => {
+      const text = this.terminal.getSelection() || window.getSelection()?.toString() || '';
+      if (text && event.clipboardData) {
+        event.clipboardData.setData('text/plain', text);
+        event.preventDefault();
+      }
+    });
+
+    // Log xterm.js onSelectionChange to see if it ever fires
+    this.terminal.onSelectionChange(() => {
+      // noop: selection is retrieved on mouseup
+    });
+
+    // Copy-on-select: when the user releases the mouse button after selecting
+    // text, copy the selection to the clipboard. Using mouseup instead of
+    // onSelectionChange avoids flooding the clipboard API during drag selection
+    // and provides a stronger user-gesture context for the Clipboard API.
+    // Using document-level listener because xterm.js with DECSET 1003 may capture
+    // mouse events on the terminal element and prevent them from firing.
+    this._mouseupListener = (event: MouseEvent) => {
+      // Only handle primary button (left click) and ignore clicks inside
+      // interactive elements like the zoom toolbar.
+      if (event.button !== 0) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('.zoom-toolbar')) {
+        return;
+      }
+
+      // Try after a short delay - xterm.js may update DOM selection after mouseup
+      setTimeout(() => {
+        const text = this.terminal.getSelection() || window.getSelection()?.toString() || '';
+        if (text) {
+          navigator.clipboard?.writeText(text).catch(() => {
+            // clipboard write failed silently
+          });
+        }
+      }, 100);
+    };
+    document.addEventListener('mouseup', this._mouseupListener);
+
+    // Document-level selectionchange: captures selection changes even when
+    // xterm's onSelectionChange doesn't fire (e.g., DECSET 1003 mouse tracking
+    // active). xterm renders text as DOM nodes, so window.getSelection() still
+    // works to capture the selected text.
+    this._selectionChangeDocumentListener = () => {
+      const selection = window.getSelection();
+      const text = selection?.toString() || '';
+      if (text) {
+        this.selectedText = text;
+      }
+    };
+    document.addEventListener('selectionchange', this._selectionChangeDocumentListener);
+
+    // Clear stored selection text when user starts a new selection, so that
+    // stale text from a previous selection isn't copied on an empty mouseup.
+    this._mousedownListener = () => {
+      this.selectedText = '';
+    };
+    document.addEventListener('mousedown', this._mousedownListener);
+
+    // Context menu: right-click is a strong user gesture for clipboard access.
+    // This provides a reliable fallback when mouseup or copy events fail.
+    this._contextMenuListener = () => {
+      const text = this.getSelectedText();
+      if (text) {
+        this.copyToClipboard(text);
+      }
+    };
+    this.element.addEventListener('contextmenu', this._contextMenuListener);
   }
 
-  private handleCopyEvent(event: ClipboardEvent): void {
-    if (!this.terminal.hasSelection()) {
+  /**
+   * Robust clipboard copy with multiple fallback strategies.
+   * Tries the modern async Clipboard API first (most reliable in secure
+   * contexts like localhost and HTTPS), then falls back to execCommand.
+   */
+  private copyToClipboard(text: string): void {
+    if (!text) return;
+
+    // Strategy 1: Async Clipboard API (modern standard, works in secure contexts)
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard
+        .writeText(text)
+        .then(() => {
+          // success
+        })
+        .catch((err) => {
+          console.warn('[TerminalManager] navigator.clipboard.writeText() failed:', err);
+          this.copyToClipboardFallback(text);
+        });
       return;
     }
 
-    const text = this.selectedText || this.terminal.getSelection();
+    // Strategy 2: Hidden textarea + document.execCommand('copy')
+    this.copyToClipboardFallback(text);
+  }
+
+  /**
+   * Fallback clipboard copy using document.execCommand('copy').
+   * Creates a temporary off-screen textarea, focuses it, and triggers
+   * the copy command. This works inside user gestures on most browsers.
+   */
+  private copyToClipboardFallback(text: string): void {
+    try {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+
+      const success = document.execCommand('copy');
+      document.body.removeChild(textarea);
+
+      if (!success) {
+        console.warn('[TerminalManager] execCommand("copy") returned false');
+      }
+    } catch (e) {
+      console.warn('[TerminalManager] execCommand("copy") threw:', e);
+    }
+  }
+
+  private handleCopyEvent(event: ClipboardEvent): void {
+    const text = this.getSelectedText();
     if (!text) {
       return;
     }
@@ -357,33 +493,16 @@ export class TerminalManager {
     event.preventDefault();
 
     if (event.clipboardData) {
-      event.clipboardData.setData('text/plain', text);
-      return;
+      try {
+        event.clipboardData.setData('text/plain', text);
+        return;
+      } catch (e) {
+        console.warn('[TerminalManager] clipboardData.setData() failed:', e);
+      }
     }
 
-    void this.writeClipboardText(text);
-  }
-
-  private async copySelectionToClipboard(): Promise<void> {
-    const text = this.selectedText || this.terminal.getSelection();
-    if (!text) {
-      return;
-    }
-
-    await this.writeClipboardText(text);
-  }
-
-  private async writeClipboardText(text: string): Promise<void> {
-    if (!navigator.clipboard?.writeText) {
-      console.warn('Clipboard API unavailable; unable to copy terminal selection');
-      return;
-    }
-
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch (error) {
-      console.warn('Failed to copy terminal selection to clipboard', error);
-    }
+    // Fallback if clipboardData is not available
+    this.copyToClipboard(text);
   }
 
   private setupTouchScroll(element: HTMLElement): void {
@@ -1090,14 +1209,29 @@ export class TerminalManager {
     this.touchStartListener = null;
     this.touchMoveListener = null;
 
-    if (this._selectionChangeDisposable) {
-      this._selectionChangeDisposable.dispose();
-      this._selectionChangeDisposable = null;
-    }
-
     if (this._copyListener) {
       this.element.removeEventListener('copy', this._copyListener);
       this._copyListener = null;
+    }
+
+    if (this._mouseupListener) {
+      document.removeEventListener('mouseup', this._mouseupListener);
+      this._mouseupListener = null;
+    }
+
+    if (this._selectionChangeDocumentListener) {
+      document.removeEventListener('selectionchange', this._selectionChangeDocumentListener);
+      this._selectionChangeDocumentListener = null;
+    }
+
+    if (this._mousedownListener) {
+      document.removeEventListener('mousedown', this._mousedownListener);
+      this._mousedownListener = null;
+    }
+
+    if (this._contextMenuListener) {
+      this.element.removeEventListener('contextmenu', this._contextMenuListener);
+      this._contextMenuListener = null;
     }
 
     if (this._xtermViewport && this._xtermViewportScrollListener) {

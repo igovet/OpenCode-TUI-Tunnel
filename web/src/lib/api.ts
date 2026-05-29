@@ -207,3 +207,27 @@ export async function attachTmuxSession(
   if (!res.ok) return null;
   return res.json();
 }
+
+// Remote tmux session discovery
+export async function getRemoteTmuxSessions(sshConnectionId: string): Promise<import('./types').TmuxDiscoverySession[]> {
+  const res = await fetch(`/api/ssh/connections/${sshConnectionId}/tmux-sessions`);
+  if (!res.ok) return [];
+  const data = (await res.json()) as { sessions: import('./types').TmuxDiscoverySession[] };
+  return data.sessions || [];
+}
+
+// Attach to remote tmux session
+export async function attachRemoteTmuxSession(
+  sshConnectionId: string,
+  name: string,
+  cols?: number,
+  rows?: number,
+): Promise<{ sessionId: string; streamUrl: string } | null> {
+  const res = await fetch(`/api/ssh/connections/${sshConnectionId}/tmux-sessions/${encodeURIComponent(name)}/attach`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ cols, rows }),
+  });
+  if (!res.ok) return null;
+  return res.json();
+}
