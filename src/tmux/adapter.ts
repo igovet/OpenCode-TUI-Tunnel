@@ -183,7 +183,7 @@ function parseTmuxSessionInfoLine(line: string): TmuxSessionInfo | null {
     windows,
     attached: attached > 0,
     currentPath,
-    isManaged: name.startsWith('oct-'),
+    isManaged: false, // server overrides based on database association
   };
 }
 

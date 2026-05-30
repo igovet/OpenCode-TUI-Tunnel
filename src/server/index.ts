@@ -19,6 +19,7 @@ import {
   getSshConnection,
   insertSshConnection,
   insertSession,
+  listAllTmuxSessionNames,
   listProjectHistory,
   listSshConnections,
   logEvent,
@@ -429,7 +430,14 @@ function setupRoutes(
   });
 
   app.get('/api/tmux/sessions', async () => {
-    return { sessions: await listAllTmuxSessions() };
+    const sessions = await listAllTmuxSessions();
+    const managedNames = new Set(listAllTmuxSessionNames(db));
+    return {
+      sessions: sessions.map((session) => ({
+        ...session,
+        isManaged: managedNames.has(session.name),
+      })),
+    };
   });
 
   app.post<{ Body: Record<string, unknown> }>('/api/opencode-notify', async (request, reply) => {

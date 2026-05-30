@@ -260,6 +260,20 @@ export function findManagedSessionByTmuxSessionName(
   return row ?? null;
 }
 
+export function listAllTmuxSessionNames(db: Database): string[] {
+  const rows = db
+    .prepare(
+      `
+        SELECT DISTINCT tmux_session_name
+        FROM sessions
+        WHERE tmux_session_name IS NOT NULL
+      `,
+    )
+    .all() as Array<{ tmux_session_name: string }>;
+
+  return rows.map((row) => row.tmux_session_name);
+}
+
 export function logEvent(
   db: Database,
   sessionId: string,
