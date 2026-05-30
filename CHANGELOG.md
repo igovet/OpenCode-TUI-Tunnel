@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 ---
 
 <details open>
-<summary><strong>v0.2.3</strong> — 2026-05-30</summary>
+<summary><strong>v0.2.2</strong> — 2026-05-30</summary>
 
 ### 🔧 Bug Fixes
 
