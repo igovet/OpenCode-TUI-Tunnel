@@ -4,6 +4,7 @@
   import {
     listSessions,
     getProjectHistory,
+    deleteProjectHistory,
     getTmuxSessions,
     attachTmuxSession,
     launchSession,
@@ -241,6 +242,15 @@
     }
   }
 
+  async function handleHistoryDelete(path: string) {
+    try {
+      await deleteProjectHistory(path);
+      await load();
+    } catch (e) {
+      console.error('Failed to delete project history:', e);
+    }
+  }
+
   function openSshModal(conn?: SshConnection) {
     sshModalConnection = conn;
     sshModalOpen = true;
@@ -343,6 +353,20 @@
             </div>
           </div>
         </section>
+
+        {#if activeTab === 'local' && tmuxSessions.length > 0}
+          <section class="panel">
+            <h2 class="panel-title">[ TMUX_DISCOVERY ]</h2>
+            <div class="panel-content list-compact">
+              {#each tmuxSessions as ts}
+                <div class="list-item">
+                  <span class="tmux-name">{ts.name} <span class="dim">({ts.windows}w)</span></span>
+                  <button class="btn btn-small" onclick={() => handleAttach(ts.name)}>ATTACH</button>
+                </div>
+              {/each}
+            </div>
+          </section>
+        {/if}
 
         {#if localSessions.length > 0}
           <section class="panel">
@@ -496,21 +520,8 @@
                     <span class="source-badge local-source">local</span>
                   {/if}
                   <button class="btn btn-small init-btn" onclick={async () => await handleHistoryLaunch(proj)}>INIT</button>
+                  <button class="btn btn-small delete-btn" onclick={async () => await handleHistoryDelete(proj.path)} title="Remove from history">del</button>
                 </div>
-              </div>
-            {/each}
-          </div>
-        </section>
-      {/if}
-
-      {#if activeTab === 'local' && tmuxSessions.length > 0}
-        <section class="panel">
-          <h2 class="panel-title">[ TMUX_DISCOVERY ]</h2>
-          <div class="panel-content list-compact">
-            {#each tmuxSessions as ts}
-              <div class="list-item">
-                <span class="tmux-name">{ts.name} <span class="dim">({ts.windows}w)</span></span>
-                <button class="btn btn-small" onclick={() => handleAttach(ts.name)}>ATTACH</button>
               </div>
             {/each}
           </div>
@@ -938,6 +949,22 @@
     background: rgba(63, 185, 80, 0.15);
     border-color: var(--accent-green);
     color: var(--accent-green);
+  }
+
+  .delete-btn {
+    font-size: var(--font-size-sm);
+    padding: 2px 6px;
+    color: var(--text-muted);
+    border: 1px solid var(--border-muted);
+    background: transparent;
+    line-height: 1;
+    margin-left: auto;
+  }
+
+  .delete-btn:hover {
+    color: var(--accent-red, #ef4444);
+    border-color: var(--accent-red, #ef4444);
+    background: rgba(239, 68, 68, 0.1);
   }
 
   @media (max-width: 640px) {

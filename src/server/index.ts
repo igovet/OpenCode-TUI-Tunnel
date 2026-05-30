@@ -14,11 +14,13 @@ import type { AppConfig } from '../config/index.js';
 import {
   type Database,
   countActiveSessionsForSshConnection,
+  deleteProjectHistory,
   deleteSshConnection,
   findManagedSessionByTmuxSessionName,
   getSshConnection,
   insertSshConnection,
   insertSession,
+  listAllTmuxSessionNames,
   listProjectHistory,
   listSshConnections,
   logEvent,
@@ -388,6 +390,21 @@ function setupRoutes(
     return { history: listProjectHistory(db) };
   });
 
+  app.delete<{ Body: { path?: string } }>('/api/projects/history', async (request, reply) => {
+    const body = request.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return reply.code(400).send({ error: 'Request body must be an object' });
+    }
+
+    const path = body.path;
+    if (!path || typeof path !== 'string') {
+      return reply.code(400).send({ error: 'Missing or invalid "path" field' });
+    }
+
+    deleteProjectHistory(db, path);
+    return { ok: true };
+  });
+
   app.get('/api/push/vapid-public-key', async () => {
     return { publicKey: config.push.vapidPublicKey };
   });
@@ -429,7 +446,14 @@ function setupRoutes(
   });
 
   app.get('/api/tmux/sessions', async () => {
-    return { sessions: await listAllTmuxSessions() };
+    const sessions = await listAllTmuxSessions();
+    const managedNames = new Set(listAllTmuxSessionNames(db));
+    return {
+      sessions: sessions.map((session) => ({
+        ...session,
+        isManaged: managedNames.has(session.name),
+      })),
+    };
   });
 
   app.post<{ Body: Record<string, unknown> }>('/api/opencode-notify', async (request, reply) => {
@@ -1185,13 +1209,7 @@ function setupRoutes(
         try {
           const raw = Buffer.isBuffer(data) ? data : Buffer.from(data as string, 'utf8');
 
-          // Strip any-event mouse tracking sequences (DECSET 1003) from all sessions to
-          // ensure xterm.js selection works correctly. When mouse tracking is active,
-          // xterm.js onSelectionChange returns 0 and copy doesn't work.
-          const output = decoder
-            .write(raw)
-            .replaceAll('\x1b[?1003h', '')
-            .replaceAll('\x1b[?1003l', '');
+          const output = decoder.write(raw);
 
           if (typeof ws.readyState === 'number' && ws.readyState !== WS_READY_STATE_OPEN) {
             closeHandle();

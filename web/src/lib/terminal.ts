@@ -2,6 +2,7 @@ import { terminalManagers } from './zoomStore.svelte';
 import { get } from 'svelte/store';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
+import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { workspace } from './workspace';
 import { appView } from './appView';
 import { showBrowserNotification } from './notifications';
@@ -165,6 +166,35 @@ export class TerminalManager {
 
     this.fitAddon = new FitAddon();
     this.terminal.loadAddon(this.fitAddon);
+
+    // Load clipboard addon for OSC 52 clipboard support (e.g., opencode copy)
+    const clipboardAddon = new ClipboardAddon();
+    this.terminal.loadAddon(clipboardAddon);
+
+    // Register custom OSC 52 handler for tmux DCS passthrough.
+    // opencode wraps OSC 52 in DCS when running inside tmux:
+    //   \x1bPtmux;\x1b\x1b]52;c;base64\x07\x1b\\
+    // The ClipboardAddon handles raw OSC 52, but we need to handle
+    // the tmux DCS wrapper ourselves since tmux may strip passthrough
+    // unless allow-passthrough is enabled in tmux config.
+    this.terminal.parser.registerOscHandler(52, (data) => {
+      const idx = data.indexOf(';');
+      if (idx === -1) return false;
+      const b64 = data.substring(idx + 1);
+      if (!b64) return false;
+      try {
+        // atob() returns a binary string where each charCode is a byte.
+        // Use TextDecoder to properly decode UTF-8 multi-byte sequences
+        // (Cyrillic, emoji, etc.) instead of treating bytes as UTF-16 code units.
+        const text = new TextDecoder().decode(
+          Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)),
+        );
+        navigator.clipboard.writeText(text);
+      } catch (e) {
+        console.warn('[TerminalManager] OSC 52 clipboard write failed:', e);
+      }
+      return true;
+    });
 
     this.terminal.attachCustomKeyEventHandler((event: KeyboardEvent) => {
       if (this.customKeyEventHandler && !this.customKeyEventHandler(event)) {
@@ -531,7 +561,9 @@ export class TerminalManager {
       }
 
       if (Math.abs(deltaY) > 0) {
-        const target = e.target as HTMLElement;
+        // Dispatch to xterm's viewport element where its scroll handler listens,
+        // not to e.target which could be a canvas or other element inside xterm.
+        const target = this._xtermViewport ?? e.target as HTMLElement;
         target.dispatchEvent(
           new WheelEvent('wheel', {
             deltaY: deltaY * 1.5,

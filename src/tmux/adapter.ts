@@ -29,9 +29,25 @@ function getTmuxExecEnv(): NodeJS.ProcessEnv {
     }
   }
 
+  // Filter out SSH variables that cause opencode to enable mouse tracking
+  // when connecting via SSH. Local sessions should not have these.
+  const {
+    SSH_CONNECTION,
+    SSH_CLIENT,
+    SSH_TTY,
+    ...envWithoutSsh
+  } = process.env;
+
   return {
-    ...process.env,
+    ...envWithoutSsh,
     PATH: segments.join(':'),
+    // Inform opencode that this is a desktop session so it enables mouse tracking.
+    // Without these, opencode assumes a TTY/SSH environment and disables mouse support.
+    DESKTOP_SESSION: 'ubuntu',
+    GDMSESSION: 'ubuntu',
+    GNOME_DESKTOP_SESSION_ID: 'this-is-deprecated',
+    XDG_CURRENT_DESKTOP: 'ubuntu',
+    XDG_SESSION_DESKTOP: 'ubuntu',
   };
 }
 
@@ -167,7 +183,7 @@ function parseTmuxSessionInfoLine(line: string): TmuxSessionInfo | null {
     windows,
     attached: attached > 0,
     currentPath,
-    isManaged: name.startsWith('oct-'),
+    isManaged: false, // server overrides based on database association
   };
 }
 
@@ -215,7 +231,35 @@ export async function createSession(name: string, cwd: string, tunnelUrl?: strin
     tmuxArgs.push('-e', `OPENCODE_TUI_TUNNEL_URL=${tunnelUrl}`);
   }
 
+  // Always set XDG_SESSION_TYPE so opencode starts correctly regardless of attach vs new-session.
+  // Override for Linux TTY sessions (no desktop environment).
+  // Desktop sessions (x11/wayland) and macOS are unaffected.
+  const isLinuxTtyNoDesktop =
+    process.platform === 'linux' &&
+    (process.stdin.isTTY || process.stdout.isTTY || process.stderr.isTTY) &&
+    !['x11', 'wayland'].includes(process.env.XDG_SESSION_TYPE ?? '');
+
+  if (isLinuxTtyNoDesktop) {
+    tmuxArgs.push('-e', 'XDG_SESSION_TYPE=x11');
+    tmuxArgs.push('-e', 'DISPLAY=:0');
+  } else {
+    // Ensure XDG_SESSION_TYPE is set so opencode respects it when starting in new-session.
+    tmuxArgs.push('-e', 'XDG_SESSION_TYPE=x11');
+  }
+
   await execTmux(tmuxArgs);
+
+  // Inform tmux session that this is a desktop session so bash (and opencode) can detect it.
+  // Without these, opencode assumes a TTY/SSH environment and disables mouse support.
+  // Note: getTmuxExecEnv() sets these on the tmux SERVER process, but tmux does not
+  // automatically pass its process environment to the bash shell it spawns. We must
+  // explicitly set them in the session environment so they are inherited by bash.
+  await execTmux(['set-environment', '-t', name, 'DESKTOP_SESSION', 'ubuntu']);
+  await execTmux(['set-environment', '-t', name, 'GDMSESSION', 'ubuntu']);
+  await execTmux(['set-environment', '-t', name, 'GNOME_DESKTOP_SESSION_ID', 'this-is-deprecated']);
+  await execTmux(['set-environment', '-t', name, 'XDG_CURRENT_DESKTOP', 'ubuntu']);
+  await execTmux(['set-environment', '-t', name, 'XDG_SESSION_DESKTOP', 'ubuntu']);
+
   await execTmux(['set-option', '-t', name, 'status', 'off']);
 }
 
