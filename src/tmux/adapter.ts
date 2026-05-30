@@ -41,6 +41,13 @@ function getTmuxExecEnv(): NodeJS.ProcessEnv {
   return {
     ...envWithoutSsh,
     PATH: segments.join(':'),
+    // Inform opencode that this is a desktop session so it enables mouse tracking.
+    // Without these, opencode assumes a TTY/SSH environment and disables mouse support.
+    DESKTOP_SESSION: 'ubuntu',
+    GDMSESSION: 'ubuntu',
+    GNOME_DESKTOP_SESSION_ID: 'this-is-deprecated',
+    XDG_CURRENT_DESKTOP: 'ubuntu',
+    XDG_SESSION_DESKTOP: 'ubuntu',
   };
 }
 
