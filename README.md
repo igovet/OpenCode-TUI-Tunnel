@@ -51,6 +51,7 @@ Continue below for full docs:
 - [Installation](#installation)
 - [Usage](#usage)
 - [CLI Reference](#cli-reference)
+- [SSH Connections](#ssh-connections)
 - [Cloudflare Tunnel Setup (Zero Trust Authentication)](#cloudflare-tunnel-setup-zero-trust-authentication)
 - [Changelog](#changelog)
 
@@ -509,6 +510,37 @@ Key settings:
 - `server.port` — default: 4096
 - `paths.allowedRoots` — directories where new sessions can be launched
 - `sessions.maxConcurrent` — max concurrent sessions (default: 8)
+
+## SSH Connections
+
+OpenCode TUI Tunnel supports connecting to remote servers via SSH, allowing you to launch and manage `opencode` sessions on remote machines directly from the browser UI.
+
+### Setting up an SSH connection
+
+1. Open the web UI and switch to the **SSH** tab.
+2. Click **+ NEW CONNECTION** to open the connection modal.
+3. Fill in the required fields:
+   - **Name** — A friendly label for this connection (e.g., "Home Server")
+   - **Host** — The SSH server hostname or IP address
+   - **Port** — SSH port (default: 22)
+   - **Username** — Your SSH login username
+   - **Authentication** — Choose between:
+     - **SSH key** — Select a private key file (supports encrypted keys with passphrase)
+     - **SSH agent** — Use your system's running SSH agent
+4. Configure opencode settings:
+   - **Provider** — `local` (run opencode on the remote server) or `server` (use the remote server's opencode installation)
+   - **Command** — Optional custom opencode launch command
+5. Click **Save** to store the connection.
+
+### Using SSH connections
+
+- **Launch remote sessions:** Select an SSH connection from the dropdown and enter a project path to start an opencode session on the remote server.
+- **Remote tmux discovery:** The SSH tab shows all running tmux sessions on the remote server. Click **Attach** to connect to any existing session.
+- **Manage connections:** Use the connection list to edit, test, or delete saved SSH connections.
+
+### SSHFS (optional)
+
+If SSHFS is available on your system, the app can automatically mount remote directories for local path browsing when launching remote sessions.
 
 ## Cloudflare Tunnel Setup (Zero Trust Authentication)
 

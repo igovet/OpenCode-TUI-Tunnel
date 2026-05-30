@@ -14,6 +14,7 @@ import type { AppConfig } from '../config/index.js';
 import {
   type Database,
   countActiveSessionsForSshConnection,
+  deleteProjectHistory,
   deleteSshConnection,
   findManagedSessionByTmuxSessionName,
   getSshConnection,
@@ -387,6 +388,21 @@ function setupRoutes(
 
   app.get('/api/projects/history', async () => {
     return { history: listProjectHistory(db) };
+  });
+
+  app.delete<{ Body: { path?: string } }>('/api/projects/history', async (request, reply) => {
+    const body = request.body;
+    if (!body || typeof body !== 'object' || Array.isArray(body)) {
+      return reply.code(400).send({ error: 'Request body must be an object' });
+    }
+
+    const path = body.path;
+    if (!path || typeof path !== 'string') {
+      return reply.code(400).send({ error: 'Missing or invalid "path" field' });
+    }
+
+    deleteProjectHistory(db, path);
+    return { ok: true };
   });
 
   app.get('/api/push/vapid-public-key', async () => {

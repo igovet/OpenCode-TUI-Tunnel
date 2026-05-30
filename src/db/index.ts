@@ -319,11 +319,21 @@ export function listProjectHistory(db: Database, limit = 20): ProjectHistoryReco
       `
         SELECT path, last_used_at, session_count, source
         FROM project_history
+        WHERE datetime(last_used_at) >= datetime('now', '-14 days')
         ORDER BY datetime(last_used_at) DESC, path ASC
         LIMIT ?
       `,
     )
     .all(normalizedLimit) as ProjectHistoryRecord[];
+}
+
+export function deleteProjectHistory(db: Database, path: string): void {
+  db.prepare(
+    `
+      DELETE FROM project_history
+      WHERE path = ?
+    `,
+  ).run(path);
 }
 
 export function upsertPushSubscription(

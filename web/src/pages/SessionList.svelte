@@ -4,6 +4,7 @@
   import {
     listSessions,
     getProjectHistory,
+    deleteProjectHistory,
     getTmuxSessions,
     attachTmuxSession,
     launchSession,
@@ -238,6 +239,15 @@
       } else {
         console.error('Failed to launch from history:', e);
       }
+    }
+  }
+
+  async function handleHistoryDelete(path: string) {
+    try {
+      await deleteProjectHistory(path);
+      await load();
+    } catch (e) {
+      console.error('Failed to delete project history:', e);
     }
   }
 
@@ -509,6 +519,7 @@
                   {:else}
                     <span class="source-badge local-source">local</span>
                   {/if}
+                  <button class="btn btn-small delete-btn" onclick={async () => await handleHistoryDelete(proj.path)} title="Remove from history">×</button>
                   <button class="btn btn-small init-btn" onclick={async () => await handleHistoryLaunch(proj)}>INIT</button>
                 </div>
               </div>
@@ -938,6 +949,21 @@
     background: rgba(63, 185, 80, 0.15);
     border-color: var(--accent-green);
     color: var(--accent-green);
+  }
+
+  .delete-btn {
+    font-size: var(--font-size-sm);
+    padding: 2px 6px;
+    color: var(--text-muted);
+    border: 1px solid var(--border-muted);
+    background: transparent;
+    line-height: 1;
+  }
+
+  .delete-btn:hover {
+    color: var(--accent-red, #ef4444);
+    border-color: var(--accent-red, #ef4444);
+    background: rgba(239, 68, 68, 0.1);
   }
 
   @media (max-width: 640px) {

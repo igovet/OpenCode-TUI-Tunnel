@@ -15,6 +15,19 @@ All notable changes to this project are documented here.
 
 - **UTF-8 encoding fix in OSC 52 clipboard handler** — clipboard copy operations now correctly handle UTF-8 text encoding
 
+### 🎯 Features
+
+- **Project history delete button** — Users can now remove individual entries from the Recent Projects list by clicking the × button next to each entry
+- **Recent projects 2-week filtering** — The Recent Projects panel now only shows projects used within the last 14 days, keeping the list relevant and uncluttered
+
+### 🎨 UI/UX
+
+- **Tmux session discovery reordering** — [TMUX_DISCOVERY] section now appears before [ACTIVE_SESSIONS] in the local tab for better workflow
+
+### 📡 Infrastructure
+
+- **Tmux session database association check** — Local tmux session discovery now correctly filters based on database association rather than `oct-*` prefix. Sessions with DB records in any status (including exited) are no longer shown as discoverable local sessions
+
 </details>
 
 <details>

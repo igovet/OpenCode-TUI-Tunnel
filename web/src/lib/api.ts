@@ -185,6 +185,27 @@ export async function getProjectHistory(): Promise<import('./types').ProjectHist
   return data.history || [];
 }
 
+export async function deleteProjectHistory(path: string): Promise<void> {
+  const res = await fetch('/api/projects/history', {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path }),
+  });
+  if (!res.ok) {
+    let errBody: { error?: string } = {};
+    try {
+      errBody = await res.json();
+    } catch {
+      /* ignore */
+    }
+    const err: Error & { statusCode?: number } = new Error(
+      errBody.error ?? 'Failed to delete project history entry',
+    );
+    err.statusCode = res.status;
+    throw err;
+  }
+}
+
 // tmux session discovery
 export async function getTmuxSessions(): Promise<import('./types').TmuxDiscoverySession[]> {
   const res = await fetch('/api/tmux/sessions');
