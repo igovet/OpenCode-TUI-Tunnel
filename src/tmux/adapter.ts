@@ -29,8 +29,17 @@ function getTmuxExecEnv(): NodeJS.ProcessEnv {
     }
   }
 
+  // Filter out SSH variables that cause opencode to enable mouse tracking
+  // when connecting via SSH. Local sessions should not have these.
+  const {
+    SSH_CONNECTION,
+    SSH_CLIENT,
+    SSH_TTY,
+    ...envWithoutSsh
+  } = process.env;
+
   return {
-    ...process.env,
+    ...envWithoutSsh,
     PATH: segments.join(':'),
   };
 }
