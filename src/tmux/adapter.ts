@@ -224,10 +224,6 @@ export async function createSession(name: string, cwd: string, tunnelUrl?: strin
     tmuxArgs.push('-e', `OPENCODE_TUI_TUNNEL_URL=${tunnelUrl}`);
   }
 
-  // Set TERM so opencode respects xterm-compatible mouse protocols instead of
-  // falling back to screen's DECSET 1003 hover tracking.
-  tmuxArgs.push('-e', 'TERM=xterm-256color');
-
   // Always set XDG_SESSION_TYPE so opencode starts correctly regardless of attach vs new-session.
   // Override for Linux TTY sessions (no desktop environment).
   // Desktop sessions (x11/wayland) and macOS are unaffected.
