@@ -519,8 +519,8 @@
                   {:else}
                     <span class="source-badge local-source">local</span>
                   {/if}
-                  <button class="btn btn-small delete-btn" onclick={async () => await handleHistoryDelete(proj.path)} title="Remove from history">×</button>
                   <button class="btn btn-small init-btn" onclick={async () => await handleHistoryLaunch(proj)}>INIT</button>
+                  <button class="btn btn-small delete-btn" onclick={async () => await handleHistoryDelete(proj.path)} title="Remove from history">del</button>
                 </div>
               </div>
             {/each}
@@ -958,6 +958,7 @@
     border: 1px solid var(--border-muted);
     background: transparent;
     line-height: 1;
+    margin-left: auto;
   }
 
   .delete-btn:hover {
