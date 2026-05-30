@@ -215,7 +215,8 @@ export async function createSession(name: string, cwd: string, tunnelUrl?: strin
     tmuxArgs.push('-e', `OPENCODE_TUI_TUNNEL_URL=${tunnelUrl}`);
   }
 
-  // Only override XDG_SESSION_TYPE for Linux TTY sessions (no desktop environment).
+  // Always set XDG_SESSION_TYPE so opencode starts correctly regardless of attach vs new-session.
+  // Override for Linux TTY sessions (no desktop environment).
   // Desktop sessions (x11/wayland) and macOS are unaffected.
   const isLinuxTtyNoDesktop =
     process.platform === 'linux' &&
@@ -225,6 +226,9 @@ export async function createSession(name: string, cwd: string, tunnelUrl?: strin
   if (isLinuxTtyNoDesktop) {
     tmuxArgs.push('-e', 'XDG_SESSION_TYPE=x11');
     tmuxArgs.push('-e', 'DISPLAY=:0');
+  } else {
+    // Ensure XDG_SESSION_TYPE is set so opencode respects it when starting in new-session.
+    tmuxArgs.push('-e', 'XDG_SESSION_TYPE=x11');
   }
 
   await execTmux(tmuxArgs);
