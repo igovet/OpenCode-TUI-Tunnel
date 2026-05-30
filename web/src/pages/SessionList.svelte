@@ -344,6 +344,20 @@
           </div>
         </section>
 
+        {#if activeTab === 'local' && tmuxSessions.length > 0}
+          <section class="panel">
+            <h2 class="panel-title">[ TMUX_DISCOVERY ]</h2>
+            <div class="panel-content list-compact">
+              {#each tmuxSessions as ts}
+                <div class="list-item">
+                  <span class="tmux-name">{ts.name} <span class="dim">({ts.windows}w)</span></span>
+                  <button class="btn btn-small" onclick={() => handleAttach(ts.name)}>ATTACH</button>
+                </div>
+              {/each}
+            </div>
+          </section>
+        {/if}
+
         {#if localSessions.length > 0}
           <section class="panel">
             <h2 class="panel-title">[ ACTIVE_SESSIONS ]</h2>
@@ -497,20 +511,6 @@
                   {/if}
                   <button class="btn btn-small init-btn" onclick={async () => await handleHistoryLaunch(proj)}>INIT</button>
                 </div>
-              </div>
-            {/each}
-          </div>
-        </section>
-      {/if}
-
-      {#if activeTab === 'local' && tmuxSessions.length > 0}
-        <section class="panel">
-          <h2 class="panel-title">[ TMUX_DISCOVERY ]</h2>
-          <div class="panel-content list-compact">
-            {#each tmuxSessions as ts}
-              <div class="list-item">
-                <span class="tmux-name">{ts.name} <span class="dim">({ts.windows}w)</span></span>
-                <button class="btn btn-small" onclick={() => handleAttach(ts.name)}>ATTACH</button>
               </div>
             {/each}
           </div>
