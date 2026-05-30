@@ -248,6 +248,18 @@ export async function createSession(name: string, cwd: string, tunnelUrl?: strin
   }
 
   await execTmux(tmuxArgs);
+
+  // Inform tmux session that this is a desktop session so bash (and opencode) can detect it.
+  // Without these, opencode assumes a TTY/SSH environment and disables mouse support.
+  // Note: getTmuxExecEnv() sets these on the tmux SERVER process, but tmux does not
+  // automatically pass its process environment to the bash shell it spawns. We must
+  // explicitly set them in the session environment so they are inherited by bash.
+  await execTmux(['set-environment', '-t', name, 'DESKTOP_SESSION', 'ubuntu']);
+  await execTmux(['set-environment', '-t', name, 'GDMSESSION', 'ubuntu']);
+  await execTmux(['set-environment', '-t', name, 'GNOME_DESKTOP_SESSION_ID', 'this-is-deprecated']);
+  await execTmux(['set-environment', '-t', name, 'XDG_CURRENT_DESKTOP', 'ubuntu']);
+  await execTmux(['set-environment', '-t', name, 'XDG_SESSION_DESKTOP', 'ubuntu']);
+
   await execTmux(['set-option', '-t', name, 'status', 'off']);
 }
 

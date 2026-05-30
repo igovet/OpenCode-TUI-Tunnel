@@ -1185,13 +1185,7 @@ function setupRoutes(
         try {
           const raw = Buffer.isBuffer(data) ? data : Buffer.from(data as string, 'utf8');
 
-          // Strip any-event mouse tracking sequences (DECSET 1003) from all sessions to
-          // ensure xterm.js selection works correctly. When mouse tracking is active,
-          // xterm.js onSelectionChange returns 0 and copy doesn't work.
-          const output = decoder
-            .write(raw)
-            .replaceAll('\x1b[?1003h', '')
-            .replaceAll('\x1b[?1003l', '');
+          const output = decoder.write(raw);
 
           if (typeof ws.readyState === 'number' && ws.readyState !== WS_READY_STATE_OPEN) {
             closeHandle();

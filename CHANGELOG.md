@@ -5,11 +5,25 @@ All notable changes to this project are documented here.
 ---
 
 <details open>
+<summary><strong>v0.2.3</strong> — 2026-05-30</summary>
+
+### 🔧 Bug Fixes
+
+- **Desktop environment variables in tmux sessions** — tmux adapter now passes DESKTOP_SESSION, XDG_CURRENT_DESKTOP, XDG_SESSION_TYPE, DISPLAY, WAYLAND_DISPLAY, and SSH_CONNECTION to spawned sessions for proper clipboard and GUI integration
+
+### 🔧 Bug Fixes (continued from v0.2.1)
+
+- **UTF-8 encoding fix in OSC 52 clipboard handler** — clipboard copy operations now correctly handle UTF-8 text encoding
+
+</details>
+
+<details>
 <summary><strong>v0.2.1</strong> — 2026-05-29</summary>
 
 ### 🎯 Features
 
 - **Remote tmux session discovery and attach** — SSH tab now shows all running tmux sessions on the remote server, not just ones launched by this app. Users can attach to any existing tmux session directly from the "REMOTE TMUX DISCOVERY" panel.
+- **Added `@xterm/addon-clipboard` for OSC 52 clipboard support** — copy operations in opencode TUI now work correctly
 
 ### 🔧 Bug Fixes
 
@@ -29,12 +43,16 @@ All notable changes to this project are documented here.
 
   - **Remote tmux auto-refresh removed:** Removed 15-second auto-refresh interval for remote tmux session discovery. Users must now manually click the reload button (↻) to refresh remote tmux sessions.
 
+  - **Mouse tracking sequence stripping removed:** Removed server-side mouse tracking sequence stripping that was breaking mouse event forwarding in opencode TUI. The server was only partially stripping mouse sequences (`\x1b[?1003h`), leaving others (`\x1b[?1000h`, `\x1b[?1002h`, `\x1b[?1006h`) that put xterm.js into an inconsistent mouse mode state.
+
 ### 🎨 UI/UX
 
 - **TMUX_DISCOVERY panel repositioned** to the left column (main-col) in the SSH tab, appearing after the launch panel. Panel renamed from `[ REMOTE TMUX SESSIONS ]` to `[ TMUX_DISCOVERY ]` for consistency.
 - **Remote session polling** now uses a dedicated 15-second interval (vs. 3 seconds for local sessions) to reduce server load.
 - **All SSH connections** now display their tmux sessions simultaneously, grouped by connection name.
 - **Reload button** (↻) added to TMUX_DISCOVERY panel for manual session refresh.
+
+- **Touch scrolling on mobile devices:** Fixed touch scrolling from mobile devices not working in terminal by changing WheelEvent dispatch target to xterm viewport and CSS `touch-action` from `pan-y` to `none`.
 
 </details>
 

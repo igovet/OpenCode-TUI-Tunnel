@@ -404,7 +404,7 @@
 
   :global(.terminal-pane .xterm-screen canvas) {
     image-rendering: pixelated;
-    touch-action: pan-y;
+    touch-action: none;
     transform: translateZ(0) !important;
   }
 
@@ -424,7 +424,7 @@
     overflow-x: hidden !important;
     scrollbar-width: none !important; /* Firefox */
     overscroll-behavior: contain;
-    touch-action: pan-y;
+    touch-action: none;
     -webkit-overflow-scrolling: touch;
   }
 
