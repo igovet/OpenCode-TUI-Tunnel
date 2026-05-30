@@ -215,6 +215,18 @@ export async function createSession(name: string, cwd: string, tunnelUrl?: strin
     tmuxArgs.push('-e', `OPENCODE_TUI_TUNNEL_URL=${tunnelUrl}`);
   }
 
+  // Only override XDG_SESSION_TYPE for Linux TTY sessions (no desktop environment).
+  // Desktop sessions (x11/wayland) and macOS are unaffected.
+  const isLinuxTtyNoDesktop =
+    process.platform === 'linux' &&
+    (process.stdin.isTTY || process.stdout.isTTY || process.stderr.isTTY) &&
+    !['x11', 'wayland'].includes(process.env.XDG_SESSION_TYPE ?? '');
+
+  if (isLinuxTtyNoDesktop) {
+    tmuxArgs.push('-e', 'XDG_SESSION_TYPE=x11');
+    tmuxArgs.push('-e', 'DISPLAY=:0');
+  }
+
   await execTmux(tmuxArgs);
   await execTmux(['set-option', '-t', name, 'status', 'off']);
 }
