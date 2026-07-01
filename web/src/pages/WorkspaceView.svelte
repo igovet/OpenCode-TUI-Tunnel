@@ -102,7 +102,11 @@
   });
 </script>
 
-<div class="workspace" style="height: {isMobile ? (vpHeight > 0 ? (vpHeight - headerHeight) + 'px' : '100%') : '100%'}; width: 100%; box-sizing: border-box; overflow: hidden; padding-bottom: {isMobile ? '44px' : '0'};">
+<div class="workspace" style="height: {isMobile ? (vpHeight > 0 ? (vpHeight - headerHeight) + 'px' : '100%') : '100%'}; width: 100%; box-sizing: border-box; overflow: hidden; padding-bottom: {isMobile ? 'var(--mobile-keybar-height)' : '0'};">
+  <!-- Visually-hidden heading serves as the screen-reader context label and
+       the focus target for view-transition focus management (concept §5.1).
+       tabindex is set programmatically by App.svelte's focus effect. -->
+  <h2 class="sr-only" data-view-focus>Terminal workspace</h2>
   <div class="workspace-terminals">
     <TerminalGrid />
   </div>
@@ -118,6 +122,7 @@
     height: 100%;
     width: 100%;
     overflow: hidden;
+    background: var(--bg-terminal);
   }
   .workspace-terminals {
     display: flex;
@@ -127,5 +132,6 @@
     min-height: 0;
     min-width: 0;
     overflow: hidden;
+    background: var(--bg-terminal);
   }
 </style>

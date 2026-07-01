@@ -10,3 +10,4 @@ coverage/
 .opencode/index
 .opencode/tracking
 .opencode/documents
+.playwright-mcp

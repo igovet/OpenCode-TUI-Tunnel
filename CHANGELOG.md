@@ -5,6 +5,53 @@ All notable changes to this project are documented here.
 ---
 
 <details open>
+<summary><strong>v0.3.0</strong> — 2026-07-01</summary>
+
+### 🎯 Features
+
+- **Multi-terminal grid with draggable splitters** — `TerminalGrid.svelte` now supports resizable panes via Pointer Events (`setPointerCapture`/`releasePointerCapture`), sum-preserving redistribute with 15% floor. Active pane focus moves with `Ctrl/Cmd+ArrowLeft/Right`.
+- **Full 2026 design system** — "dark dev-tool premium" visual language with deep `--bg-base` `#05060a`, glassmorphism surfaces (`backdrop-filter: blur(12-20px)` + 1px border), Geist (UI) + JetBrains Mono (terminal) typography, and soft radius contrast (4px/6px/8px on cards, 0px on terminal panes).
+- **12 reusable UI primitives** — `Button` (4 variants), `Card` (glass/solid), `Dialog` (focus-trap), `Icon` (curated SVG), `Input`, `Select`, `Toggle`, `Tooltip`, `Badge`, `StatusDot`, `Toast`, `ToastProvider` — all using `var(--*)` tokens with zero hardcoded hex.
+- **Global toast notification system** — `ToastProvider.svelte` mounted globally in `App.svelte`, driven by `toastStore.svelte.ts`. Auto-dismiss 5s, pause on hover, swipe on mobile, `aria-live="polite"`/`role="status"`.
+- **PWA install CTA banner** — `InstallBanner.svelte` on `SessionList` consumes the stashed `beforeinstallprompt` event. Shows glass Card with "Install" button; iOS variant displays "Add to Home Screen" instructions. Dismissal persisted in localStorage.
+- **PWA update toast with reload action** — Service Worker `updatefound` now surfaces a sticky `info`-type toast with "Reload" action calling `window.location.reload()`.
+- **API error → toast bridge** — every API function in `web/src/lib/api.ts` that throws on non-ok now fires a fire-and-forget error toast. Callers with inline error UI can wrap calls in `withSilentApiErrors(() => ...)` to suppress duplicates.
+- **Multi-section Settings** — `SettingsModal.svelte` expanded to 4 sections (Notifications, Appearance, Terminal, Keyboard) on a left nav rail with `Dialog` focus-trap. New settings fields: `reduceMotion`, `uiFontSize`, `terminalFontSize`, `scrollback`.
+- **SshConnectionModal on Dialog primitive** — redesigned with `Dialog` (focus-trap, return-focus, Escape/Backdrop close), segment controls for auth-type (Key/Agent) and provider (Server/Local), `Badge` test-status pill, and zero hardcoded hex.
+
+### 🎨 UI/UX
+
+- **SessionList dashboard glass redesign** — header with logo mark + title, pill env-tabs (LOCAL/SSH), glass Card hero launch panel, adaptive session-card grid (`minmax(280px, 1fr)`), glass recent-projects rail.
+- **SessionCard glass restyle** — migrated to `Card` (glass variant) + `StatusDot` + `Badge` primitives; emoji replaced with SVG icons; zero hardcoded hex.
+- **SessionTabs glass pill tabs** — active tab shows gradient top-border + `Badge` attention glow; inactive tabs use ghost style; icon-based close button.
+- **TerminalPane chrome redesign** — slim 28px header overlay with pane title, status dot / attention icon, SSH `Badge`, and zoom glass dropdown. Active pane gets gradient top-bar + blue glow ring; inactive pane chrome dims to 72% while xterm canvas stays full opacity.
+- **TerminalGrid glass restyle** — glass-bordered container, accent-blue splitter hover/drag affordance, visible pagination indicator (dots + arrows + page counter).
+- **SshConnectionList glass restyle** — glass Card per connection with `Icon` actions, keyboard navigation (roving tabindex), zero hardcoded hex.
+- **PathAutocomplete glass restyle** — glass dropdown with loading spinner; ARIA combobox semantics added for screen-reader support.
+- **MobileKeybar tokenized** — glass surface with `color-mix` instead of raw `rgba`, 44px touch targets, reduced-transparency and reduced-motion fallbacks.
+- **Accessibility pass** — skip-link as first focusable element in `App.svelte`; focus-trap in all Dialog-based modals; `Ctrl/Cmd+Arrow` capture-phase keyboard nav in TerminalGrid; `--text-muted` raised to `#787f90` for WCAG AA 4.5:1 on dark surfaces; global `prefers-reduced-motion: reduce` rule resets hover/active transforms.
+
+### 🔧 Bug Fixes
+
+- **Filter chips and hero recent-project cards now render correctly** — `web/src/pages/SessionList.svelte` fixed `$derived<T>(() => {...})` → `$derived.by<T>(() => {...})` for `filterOptions` and `heroProjects` (incorrect Svelte 5 syntax returned function object instead of array).
+- **"Open" button on running sessions now switches to workspace** — `openActive` in `web/src/pages/SessionList.svelte` now creates a workspace tab when none exists (was calling `activateTab` only, which requires an existing tab).
+- **Active tab accent line moved to bottom** — `web/src/components/SessionTabs.svelte` changed `box-shadow` inset y-offset from `-2px` (top) to `2px` (bottom) per concept spec §2.2.
+
+### 📡 Infrastructure
+
+- **`theme.css` 2026 token system** — complete rewrite with backgrounds, borders, text, accents, gradients, glows, shadows, font sizes/weights/line-heights, spacing (0.125–3rem), radius, motion durations/easings, breakpoints, and z-index layers.
+- **Font loading migrated** — Google Fonts (Geist + JetBrains Mono) moved from blocking CSS `@import` in `theme.css` to non-blocking `<link rel="preconnect">` + `<link rel="preload">` + `<link rel="stylesheet">` in `web/index.html`.
+- **Manifest `theme_color` reconciled** — manifest `theme_color` and `<meta name="theme-color">` unified to `#05060a` (2026 base).
+- **Icon set regenerated** — `scripts/generate-icons.mjs` now draws a T logomark with blue→cyan→green gradient on dark background; all 4 PNG sizes + `apple-touch-icon.png` regenerated; `favicon.svg` and `logo.svg` updated to match.
+
+### ⚠️ Breaking Changes
+
+- **Legacy `LaunchForm.svelte` and `Terminal.svelte` removed** — both were unreferenced by active routing (`App.svelte` uses `SessionList`/`WorkspaceView` only). No functional impact.
+- **Hardcoded hex policy enforced** — zero ad-hoc hex literals in active component styles. All colors/spacing/typography must reference `var(--*)` tokens from `theme.css :root`. Acceptable hex categories: (1) `theme.css` definitions, (2) comments, (3) `terminal.ts` xterm ITheme JS literal.
+
+</details>
+
+<details>
 <summary><strong>v0.2.2</strong> — 2026-05-30</summary>
 
 ### 🔧 Bug Fixes

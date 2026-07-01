@@ -1,42 +1,162 @@
 <script lang="ts">
-  import { workspace } from '../lib/workspace';
+  /**
+   * SessionTabs.svelte — Chrome-style compact floating tab strip.
+   *
+   * Visual rework (ui-redesign-2026): tabs are now compact pills with
+   * ALL corners rounded (small radius), floating above the strip bg.
+   *  - Chrome-like: inactive tabs transparent (hover faint bg), active tab
+   *    solid slightly-elevated bg + subtle shadow/lift, all-corners-rounded.
+   *  - The strip has NO bottom toolbar line — tabs float over the strip bg.
+   *  - Hover-only close X (active tab always shows X).
+   *  - Drag-to-reorder via pointer events + 2px accent drop indicator.
+   *  - Right-click context menu (TabContextMenu) with close/close-others/close-right/move.
+   *  - Overflow "more" dropdown when tabs exceed the strip width.
+   *  - Compact "+" new-session button as matching floating pill (no clipping).
+   *
+   * Paging model: the workspace pane grid still pages internally
+   * (workspaceMaxPanes / workspacePage). The strip renders a SINGLE
+   * continuous row across all tabs regardless of page grouping, so
+   * activating a tab in page N still works via requestedWorkspacePage.
+   * Page-group separators are intentionally removed (concept §2.4).
+   *
+   * Svelte 5 runes. Zero hardcoded hex.
+   */
+
+  import { workspace, type WorkspaceTab } from '../lib/workspace';
   import { get } from 'svelte/store';
   import { requestedWorkspacePage } from '../lib/workspacePage';
-  import { workspaceMaxPanes, workspacePage } from '../lib/workspaceDisplay';
+  import { workspaceMaxPanes } from '../lib/workspaceDisplay';
   import { deleteSession } from '../lib/api';
   import { refreshAllManagers } from '../lib/terminal';
+  import Icon from './ui/Icon.svelte';
+  import StatusDot from './ui/StatusDot.svelte';
+  import Button from './ui/Button.svelte';
+  import Dialog from './ui/Dialog.svelte';
+  import Tooltip from './ui/Tooltip.svelte';
+  import TabContextMenu from './TabContextMenu.svelte';
 
-  let { ongoHome, ongoWorkspace, currentView }: { ongoHome: () => void, ongoWorkspace: () => void, currentView: 'home' | 'workspace' } = $props();
+  let {
+    ongoHome,
+    ongoWorkspace,
+    currentView,
+  }: { ongoHome: () => void; ongoWorkspace: () => void; currentView: 'home' | 'workspace' } =
+    $props();
+
+  // ── Close-confirm dialog state (preserved from prior implementation) ──
   let closeModalSessionId = $state<string | null>(null);
   let closeKilling = $state(false);
-  let tabsContainer: HTMLElement | null = $state(null);
 
+  // ── Strip / scroll container ──
+  let stripEl: HTMLElement | null = $state(null);
+
+  // ── Drag-to-reorder state ──
+  let dragIndex = $state<number | null>(null);
+  let dropIndex = $state<number | null>(null);
+  let dragging = $state(false);
+  let dragStartX = $state(0);
+  const DRAG_THRESHOLD = 4; // px movement before drag activates
+
+  // ── Context menu state ──
+  let menuOpen = $state(false);
+  let menuX = $state(0);
+  let menuY = $state(0);
+  let menuTabIndex = $state(0);
+  let menuTriggerEl: HTMLElement | null = $state(null);
+
+  // ── Overflow "more" dropdown state ──
+  let overflowOpen = $state(false);
+  let hasOverflow = $state(false);
+  let clippedTabs = $state<WorkspaceTab[]>([]);
+
+  // Tab elements for drag geometry + overflow measurement
+  let tabEls: HTMLElement[] = [];
+
+  // ── Wheel-to-horizontal-scroll (preserved from prior implementation) ──
   $effect(() => {
-    if (!tabsContainer) return;
+    if (!stripEl) return;
     const onWheel = (e: WheelEvent) => {
       if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
         e.preventDefault();
-        tabsContainer!.scrollLeft += e.deltaY;
+        stripEl!.scrollLeft += e.deltaY;
       }
     };
-    tabsContainer.addEventListener('wheel', onWheel, { passive: false });
-    return () => tabsContainer?.removeEventListener('wheel', onWheel);
+    stripEl.addEventListener('wheel', onWheel, { passive: false });
+    return () => stripEl?.removeEventListener('wheel', onWheel);
   });
 
+  // ── Overflow detection: measure scrollWidth vs clientWidth ──
+  function measureOverflow() {
+    if (!stripEl) {
+      hasOverflow = false;
+      clippedTabs = [];
+      return;
+    }
+    const sw = stripEl.scrollWidth;
+    const cw = stripEl.clientWidth;
+    if (sw <= cw + 1) {
+      hasOverflow = false;
+      clippedTabs = [];
+      overflowOpen = false;
+      return;
+    }
+    hasOverflow = true;
+    // A tab is "clipped" if its right edge exceeds the visible viewport.
+    const stripRect = stripEl.getBoundingClientRect();
+    const clipped = $workspace.tabs.filter((tab, i) => {
+      const el = tabEls[i];
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      // right edge beyond the visible right side (with small tolerance)
+      return r.right > stripRect.right - 1 || r.left < stripRect.left;
+    });
+    clippedTabs = clipped;
+  }
+
+  // Resize observer to re-measure overflow on viewport changes / tab add/remove
+  $effect(() => {
+    if (!stripEl) return;
+    const ro = new ResizeObserver(() => measureOverflow());
+    ro.observe(stripEl);
+    // Re-measure when the tab count changes.
+    void $workspace.tabs.length;
+    measureOverflow();
+    return () => ro.disconnect();
+  });
+
+  // Close overflow dropdown on outside pointerdown handled by contextmenu's window listener;
+  // but overflow lives in the same component so handle separately.
+  function onOverflowPointerDown(e: MouseEvent) {
+    if (overflowOpen) {
+      const el = document.querySelector('.tab-overflow-menu');
+      if (el && !el.contains(e.target as Node)) {
+        const trigger = document.querySelector('.tab-overflow-trigger');
+        if (trigger && !trigger.contains(e.target as Node)) {
+          overflowOpen = false;
+        }
+      }
+    }
+  }
+
+  $effect(() => {
+    if (!overflowOpen) return;
+    window.addEventListener('pointerdown', onOverflowPointerDown);
+    return () => window.removeEventListener('pointerdown', onOverflowPointerDown);
+  });
+
+  // ── Activation (preserved logic: activateTab + requestedWorkspacePage + refresh) ──
   function activate(sessionId: string) {
     workspace.activateTab(sessionId);
     ongoWorkspace();
-
     const ws = get(workspace);
-    const tabIndex = ws.tabs.findIndex(t => t.sessionId === sessionId);
+    const tabIndex = ws.tabs.findIndex((t) => t.sessionId === sessionId);
     if (tabIndex >= 0) {
-      requestedWorkspacePage.set(tabIndex);
+      const size = Math.max(1, $workspaceMaxPanes);
+      requestedWorkspacePage.set(Math.floor(tabIndex / size));
     }
-    
-    // Refresh terminals after tab switch to ensure correct rendering
     refreshAllManagers();
   }
-  
+
+  // ── Close flow (preserved) ──
   function close(e: Event, sessionId: string) {
     e.stopPropagation();
     closeModalSessionId = sessionId;
@@ -51,7 +171,6 @@
 
   async function killAndClose() {
     if (!closeModalSessionId || closeKilling) return;
-
     const sessionId = closeModalSessionId;
     closeKilling = true;
     try {
@@ -71,224 +190,463 @@
     doClose(sessionId);
     closeModalSessionId = null;
   }
-  
-  function handleKeydown(e: KeyboardEvent, sessionId: string) {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      activate(sessionId);
+
+  // ── Context-menu-triggered batch actions ──
+  function closeTabByIndex(index: number) {
+    const tab = $workspace.tabs[index];
+    if (tab) doClose(tab.sessionId);
+  }
+
+  function closeOthers(index: number) {
+    const keep = $workspace.tabs[index];
+    if (!keep) return;
+    const others = $workspace.tabs.filter((_, i) => i !== index);
+    for (const t of others) {
+      workspace.closeTab(t.sessionId);
     }
   }
 
-  let tabGroups = $derived.by(() => {
-    const size = Math.max(1, $workspaceMaxPanes);
+  function closeRight(index: number) {
+    const right = $workspace.tabs.slice(index + 1);
+    for (const t of right) {
+      workspace.closeTab(t.sessionId);
+    }
+  }
+
+  function moveLeft(index: number) {
+    if (index <= 0) return;
+    workspace.moveTab(index, index - 1);
+  }
+
+  function moveRight(index: number) {
+    if (index >= $workspace.tabs.length - 1) return;
+    workspace.moveTab(index, index + 1);
+  }
+
+  // ── Context menu open ──
+  function openContextMenu(e: MouseEvent, index: number, tabEl: HTMLElement) {
+    e.preventDefault();
+    e.stopPropagation();
+    menuX = e.clientX;
+    menuY = e.clientY;
+    menuTabIndex = index;
+    menuTriggerEl = tabEl;
+    menuOpen = true;
+  }
+
+  // ── Drag-to-reorder (pointer events) ──
+  function onTabPointerDown(e: PointerEvent, index: number) {
+    // Only left button initiates drag; ignore close button / context-menu triggers
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest('.tab-close')) return;
+    dragIndex = index;
+    dragStartX = e.clientX;
+    dragging = false;
+    const el = tabEls[index];
+    if (!el) return;
+    el.setPointerCapture(e.pointerId);
+  }
+
+  function onTabPointerMove(e: PointerEvent, index: number) {
+    if (dragIndex !== index) return;
+    if (dragIndex === null) return;
+    if (!dragging) {
+      if (Math.abs(e.clientX - dragStartX) > DRAG_THRESHOLD) {
+        dragging = true;
+      } else {
+        return;
+      }
+    }
+    // Compute drop index from pointer x relative to each tab's center.
     const tabs = $workspace.tabs;
-
-    if (tabs.length === 0) {
-      return [] as Array<typeof tabs>;
+    let newDrop = dragIndex;
+    for (let i = 0; i < tabs.length; i++) {
+      const el = tabEls[i];
+      if (!el) continue;
+      const r = el.getBoundingClientRect();
+      const centerX = r.left + r.width / 2;
+      if (e.clientX < centerX) {
+        newDrop = i;
+        break;
+      }
+      if (i === tabs.length - 1 && e.clientX >= centerX) {
+        newDrop = tabs.length;
+      }
     }
-
-    const groups: Array<typeof tabs> = [];
-    for (let i = 0; i < tabs.length; i += size) {
-      groups.push(tabs.slice(i, i + size));
+    // If cursor is past the last tab center, drop at end.
+    if (e.clientX > (tabEls[tabs.length - 1]?.getBoundingClientRect().right ?? 0)) {
+      newDrop = tabs.length;
     }
-    return groups;
-  });
+    // Clamp: dropping back to original or just after original is a no-op visually.
+    dropIndex = newDrop;
+  }
+
+  function onTabPointerUp(e: PointerEvent, index: number) {
+    if (dragIndex !== index) return;
+    const el = tabEls[index];
+    try {
+      el?.releasePointerCapture(e.pointerId);
+    } catch {
+      // pointer capture may already be released
+    }
+    if (dragging && dropIndex !== null) {
+      // Normalize: if dropping after the dragged index, the effective target
+      // index after removal is dropIndex-1.
+      let target = dropIndex;
+      if (target > index) target -= 1;
+      if (target >= 0 && target < $workspace.tabs.length && target !== index) {
+        workspace.moveTab(index, target);
+      }
+    }
+    dragIndex = null;
+    dropIndex = null;
+    dragging = false;
+  }
+
+  // ── Keyboard nav (role="tab") ──
+  function handleKeydown(e: KeyboardEvent, sessionId: string, index: number) {
+    const tabs = $workspace.tabs;
+    switch (e.key) {
+      case 'Enter':
+      case ' ':
+        e.preventDefault();
+        activate(sessionId);
+        break;
+      case 'ArrowRight': {
+        e.preventDefault();
+        const next = (index + 1) % tabs.length;
+        tabEls[next]?.focus();
+        break;
+      }
+      case 'ArrowLeft': {
+        e.preventDefault();
+        const prev = (index - 1 + tabs.length) % tabs.length;
+        tabEls[prev]?.focus();
+        break;
+      }
+      case 'Home': {
+        e.preventDefault();
+        tabEls[0]?.focus();
+        break;
+      }
+      case 'End': {
+        e.preventDefault();
+        tabEls[tabs.length - 1]?.focus();
+        break;
+      }
+      case 'Delete': {
+        e.preventDefault();
+        close(e, sessionId);
+        break;
+      }
+    }
+  }
+
+  function tabLabel(tab: WorkspaceTab): string {
+    return tab.title || (tab.cwd ? tab.cwd.split('/').pop() : '') || tab.sessionId.slice(0, 8);
+  }
 </script>
 
-<div class="tabs-container" role="tablist" bind:this={tabsContainer}>
-  {#each tabGroups as group, gi (gi)}
-    <div
-      class="tab-group"
-      class:active={gi === $workspacePage}
-    >
-      {#each group as tab (tab.sessionId)}
-        <div
-          class="tab"
-          class:active={tab.sessionId === $workspace.activeTabId && currentView === 'workspace'}
-          role="tab"
-          tabindex="0"
-          aria-selected={tab.sessionId === $workspace.activeTabId && currentView === 'workspace'}
-          onclick={() => activate(tab.sessionId)}
-          onkeydown={(e) => handleKeydown(e, tab.sessionId)}
-        >
-          <div class="tab-icon-container">
-            {#if tab.attention === 'question'}
-              <svg class="attention-icon question" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Question requires attention">
-                <path d="M6.5 6.5C6.5 5.67 7.17 5 8 5C8.83 5 9.5 5.67 9.5 6.5C9.5 7.33 8 8 8 9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-                <circle cx="8" cy="11" r="0.75" fill="currentColor"/>
-              </svg>
-            {:else if tab.attention === 'permission'}
-              <svg class="attention-icon permission" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg" aria-label="Permission requires attention">
-                <rect x="3" y="7.5" width="10" height="7" rx="1.5" stroke="currentColor" stroke-width="1.5"/>
-                <path d="M5.5 7.5V5.5C5.5 4.12 6.62 3 8 3C9.38 3 10.5 4.12 10.5 5.5V7.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
-                <circle cx="8" cy="11" r="1" fill="currentColor"/>
-              </svg>
-            {:else}
-              <span class="status-dot {tab.status}" aria-label="Running"></span>
-            {/if}
-          </div>
-          <span class="tab-title">{tab.title || tab.cwd.split('/').pop() || tab.sessionId.slice(0, 8)}</span>
-          <button class="tab-close" onclick={(e) => close(e, tab.sessionId)} aria-label="Close tab">×</button>
+<div class="tab-strip-wrapper">
+  <div class="tab-strip" role="tablist" bind:this={stripEl}>
+    {#each $workspace.tabs as tab, i (tab.sessionId)}
+      <div
+        class="tab"
+        class:active={tab.sessionId === $workspace.activeTabId && currentView === 'workspace'}
+        class:attention={tab.attention !== undefined && tab.attention !== 'none'}
+        class:attention-question={tab.attention === 'question'}
+        class:attention-permission={tab.attention === 'permission'}
+        class:dragging={dragging && dragIndex === i}
+        class:drop-before={dragging && dropIndex === i && dragIndex !== i}
+        class:drop-after={dragging && dropIndex === i + 1 && dragIndex !== i + 1 && i === $workspace.tabs.length - 1}
+        role="tab"
+        tabindex="0"
+        aria-selected={tab.sessionId === $workspace.activeTabId && currentView === 'workspace'}
+        aria-label="{tabLabel(tab)} — {tab.status}"
+        bind:this={tabEls[i]}
+        title={tab.cwd || tab.sessionId}
+        onclick={() => activate(tab.sessionId)}
+        onkeydown={(e) => handleKeydown(e, tab.sessionId, i)}
+        oncontextmenu={(e) => openContextMenu(e, i, tabEls[i])}
+        onpointerdown={(e) => onTabPointerDown(e, i)}
+        onpointermove={(e) => onTabPointerMove(e, i)}
+        onpointerup={(e) => onTabPointerUp(e, i)}
+        onpointercancel={() => {
+          dragIndex = null;
+          dropIndex = null;
+          dragging = false;
+        }}
+      >
+        <div class="tab-icon-container">
+          {#if tab.attention === 'question'}
+            <Icon name="info" size={14} class="attention-icon" aria-label="Question requires attention" />
+          {:else if tab.attention === 'permission'}
+            <Icon name="key" size={14} class="attention-icon" aria-label="Permission requires attention" />
+          {:else}
+            <StatusDot status={tab.status} size="sm" />
+          {/if}
         </div>
-      {/each}
-    </div>
-  {/each}
-</div>
-
-{#if closeModalSessionId}
-  <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="close-session-modal-title" onclick={() => !closeKilling && (closeModalSessionId = null)}>
-    <div class="modal-box" onclick={(e) => e.stopPropagation()}>
-      <p id="close-session-modal-title" class="modal-title">[ CLOSE TAB ]</p>
-      <p class="modal-desc">How do you want to close this tab?</p>
-      <div class="modal-actions">
-        <button class="btn modal-cancel" onclick={() => closeModalSessionId = null} disabled={closeKilling}>
-          CANCEL
-        </button>
-        <button class="btn modal-close-only" onclick={justClose} disabled={closeKilling}>
-          CLOSE
-        </button>
-        <button class="btn modal-kill" onclick={killAndClose} disabled={closeKilling}>
-          {closeKilling ? 'KILLING...' : 'KILL & CLOSE'}
+        <span class="tab-title">{tabLabel(tab)}</span>
+        <button
+          class="tab-close"
+          type="button"
+          onclick={(e) => close(e, tab.sessionId)}
+          aria-label="Close tab"
+          tabindex="-1"
+        >
+          <Icon name="close" size={12} />
         </button>
       </div>
-    </div>
+    {/each}
+
+    <!-- "+" new session button (moved from App.svelte header) -->
+    <Tooltip content="New session" position="bottom">
+      <button
+        class="tab-new"
+        type="button"
+        onclick={ongoHome}
+        aria-label="New session"
+      >
+        <Icon name="plus" size={14} />
+      </button>
+    </Tooltip>
   </div>
-{/if}
+
+  {#if hasOverflow}
+    <div class="tab-overflow">
+      <button
+        class="tab-overflow-trigger"
+        class:open={overflowOpen}
+        type="button"
+        onclick={() => (overflowOpen = !overflowOpen)}
+        aria-label="More tabs"
+        aria-haspopup="menu"
+        aria-expanded={overflowOpen}
+      >
+        <Icon name="chevron-down" size={14} />
+      </button>
+      {#if overflowOpen}
+        <div class="tab-overflow-menu" role="menu" aria-label="Hidden tabs">
+          {#each clippedTabs as tab (tab.sessionId)}
+            <button
+              class="overflow-item"
+              type="button"
+              role="menuitem"
+              onclick={() => {
+                activate(tab.sessionId);
+                overflowOpen = false;
+                // Scroll the activated tab into view.
+                const idx = $workspace.tabs.findIndex((t) => t.sessionId === tab.sessionId);
+                if (idx >= 0) tabEls[idx]?.scrollIntoView({ inline: 'center', block: 'nearest' });
+              }}
+            >
+              <span class="overflow-item-title">{tabLabel(tab)}</span>
+              <span class="overflow-item-path">{tab.cwd}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
+</div>
+
+<TabContextMenu
+  bind:open={menuOpen}
+  x={menuX}
+  y={menuY}
+  tabIndex={menuTabIndex}
+  tabCount={$workspace.tabs.length}
+  restoreFocusEl={menuTriggerEl}
+  onClose={() => closeTabByIndex(menuTabIndex)}
+  onCloseOthers={() => closeOthers(menuTabIndex)}
+  onCloseRight={() => closeRight(menuTabIndex)}
+  onMoveLeft={() => moveLeft(menuTabIndex)}
+  onMoveRight={() => moveRight(menuTabIndex)}
+/>
+
+<Dialog
+  open={closeModalSessionId !== null}
+  title="Close Tab"
+  size="sm"
+  onClose={() => {
+    if (!closeKilling) closeModalSessionId = null;
+  }}
+>
+  {#snippet children()}
+    <p class="modal-desc">How do you want to close this tab?</p>
+  {/snippet}
+  {#snippet footer()}
+    <Button variant="ghost" onclick={() => (closeModalSessionId = null)} disabled={closeKilling}
+      >Cancel</Button
+    >
+    <Button variant="secondary" onclick={justClose} disabled={closeKilling}>Close</Button>
+    <Button variant="danger" onclick={killAndClose} disabled={closeKilling} loading={closeKilling}>
+      Kill &amp; Close
+    </Button>
+  {/snippet}
+</Dialog>
 
 <style>
-  .tabs-container {
+  .tab-strip-wrapper {
     display: flex;
-    align-items: flex-end;
-    gap: 1px;
+    align-items: center;
+    flex: 1;
+    min-width: 0;
+    height: 36px;
+  }
+
+  /* Chrome-style: the strip is a plain channel with a subtle bg; tabs FLOAT
+     above it (no toolbar bottom line). Vertically centered (align-items:
+     center), with vertical padding so the floating tab shadows/lifts are
+     never clipped by overflow-y: hidden. */
+  .tab-strip {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
     flex: 1;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none;
     min-width: 0;
-    padding-top: 4px;
+    padding: var(--space-1) var(--space-1);
+    background: var(--bg-base);
   }
-  .tabs-container::-webkit-scrollbar { display: none; }
-
-  .tab-group {
-    display: flex;
-    align-items: stretch;
-    flex-shrink: 0;
-    margin-right: 6px;
-    position: relative;
-    border-top: 4px solid rgba(148, 163, 184, 0.25);
-    background: rgba(255, 255, 255, 0.02);
-    transition: border-top-color 0.2s ease, background 0.2s ease;
+  .tab-strip::-webkit-scrollbar {
+    display: none;
   }
 
-  .tab-group:last-child {
-    margin-right: 0;
-  }
-
-  .tab-group.active {
-    border-top-color: #3b82f6;
-    background: rgba(59, 130, 246, 0.07);
-  }
-
-  .tab-group.active .tab.active {
-    background: rgba(59, 130, 246, 0.15);
-    color: var(--text-primary);
-  }
-
-  .tab-group:not(.active) .tab {
-    color: var(--text-muted);
-    opacity: 0.7;
-  }
-
-  .tab-group .tab + .tab {
-    border-left: 1px solid rgba(255, 255, 255, 0.06);
-  }
-
-  .tab-group .tab.active {
-    border-bottom: none;
-  }
-  
+  /* ── Tab pill (all-corners rounded, floating) ── */
   .tab {
     display: flex;
     align-items: center;
-    gap: var(--space-2);
-    padding: 0 var(--space-3);
-    height: 36px;
+    gap: var(--space-1);
+    padding: 0 var(--space-2);
+    height: 26px;
     background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
     cursor: pointer;
     color: var(--text-muted);
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: var(--font-size-xs);
-    transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+    font-weight: var(--font-weight-medium);
+    transition:
+      background var(--transition-fast),
+      color var(--transition-fast),
+      box-shadow var(--transition-fast),
+      border-color var(--transition-fast),
+      transform var(--transition-fast);
     flex: 0 1 auto;
-    min-width: 80px;
+    min-width: 90px;
     max-width: 200px;
     width: auto;
+    position: relative;
+    user-select: none;
   }
 
-  .tab:hover,
+  /* Inactive hover: faint elevated bg appears (Chrome-like). */
+  @media (min-width: 769px) {
+    .tab:hover {
+      background: var(--bg-elevated);
+      color: var(--text-secondary);
+      border-color: var(--border-subtle);
+    }
+  }
+
+  /* Active tab: solid slightly-elevated bg, subtle shadow/lift → "floating".
+     No one-sided border, no bottom indicator line. */
   .tab.active {
-    color: var(--text-secondary);
     background: var(--bg-elevated);
-  }
-  .tab.active {
     color: var(--text-primary);
-    border-bottom-color: var(--accent-blue);
-  }
-  
-  .tab-title {
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    text-align: left;
+    border-color: var(--border-subtle);
+    box-shadow: var(--shadow-sm), var(--shadow-inset);
+    z-index: 2;
   }
 
-  /* Reserve fixed space for tab icon to prevent layout shift */
+  /* Attention indicators (preserved glow language) */
+  .tab.attention {
+    box-shadow: var(--glow-green);
+  }
+  .tab.attention.active {
+    box-shadow:
+      var(--glow-green),
+      var(--shadow-sm),
+      var(--shadow-inset);
+  }
+  .tab.attention-question {
+    box-shadow: 0 0 16px rgba(255, 92, 87, 0.2);
+  }
+  .tab.attention-question.active {
+    box-shadow:
+      0 0 16px rgba(255, 92, 87, 0.2),
+      var(--shadow-sm),
+      var(--shadow-inset);
+  }
+  .tab.attention-permission {
+    box-shadow: 0 0 16px rgba(240, 177, 50, 0.2);
+  }
+  .tab.attention-permission.active {
+    box-shadow:
+      0 0 16px rgba(240, 177, 50, 0.2),
+      var(--shadow-sm),
+      var(--shadow-inset);
+  }
+
+  /* Dragged tab: lift + larger shadow */
+  .tab.dragging {
+    transform: translateY(-1px);
+    box-shadow: var(--shadow-md);
+    z-index: 5;
+    cursor: grabbing;
+    opacity: 0.95;
+  }
+
+  /* Drop indicator: 2px accent vertical line before/after a tab */
+  .tab.drop-before::before {
+    content: '';
+    position: absolute;
+    left: -1px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--accent-blue);
+    border-radius: 1px;
+    z-index: 6;
+  }
+  .tab.drop-after::after {
+    content: '';
+    position: absolute;
+    right: -1px;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: var(--accent-blue);
+    border-radius: 1px;
+    z-index: 6;
+  }
+
   .tab-icon-container {
-    width: 16px;
-    height: 16px;
+    width: 14px;
+    height: 14px;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
   }
 
-  /* Status dot for running/idle state */
-  .status-dot {
-    display: inline-block;
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex-shrink: 0;
-    background-color: var(--text-muted);
-  }
-  .status-dot.running {
-    background-color: #22c55e;
-  }
-  .status-dot.idle,
-  .status-dot.stopped {
-    background-color: var(--text-muted);
+  .tab-title {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: left;
+    max-width: 160px;
   }
 
-  /* Animated SVG attention icons */
-  .attention-icon {
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
+  /* Animated SVG attention icons — :global because class applied to <Icon> */
+  :global(.attention-icon) {
     animation: attention-pulse 1.15s ease-in-out infinite;
     transform-origin: center;
-  }
-
-  .attention-icon.question {
-    color: #ef4444;
-    filter: drop-shadow(0 0 4px rgba(239, 68, 68, 0.5));
-  }
-
-  .attention-icon.permission {
-    color: #f59e0b;
-    filter: drop-shadow(0 0 4px rgba(245, 158, 11, 0.5));
   }
 
   @keyframes attention-pulse {
@@ -306,139 +664,228 @@
     }
   }
 
+  /* Close X — hover/active only, fades in 150ms */
   .tab-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     background: none;
     border: none;
     cursor: pointer;
     color: var(--text-muted);
-    font-size: 1rem;
-    padding: 0 2px;
-    border-radius: 0;
+    padding: 2px;
+    border-radius: var(--radius-sm);
     line-height: 1;
-    display: flex;
-    align-items: center;
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    opacity: 0;
+    transition:
+      opacity 150ms ease,
+      background var(--transition-fast),
+      color var(--transition-fast);
   }
 
-  .tab-close:hover { background: var(--bg-overlay); color: var(--accent-red); }
+  .tab:focus-within .tab-close,
+  .tab.active .tab-close {
+    opacity: 1;
+  }
 
-  @media (max-width: 640px) {
-    .tab {
-      flex: 0 0 40vw;
-      min-width: 0;
-      max-width: 40vw;
-      width: 40vw;
-      padding: 0 var(--space-2);
-      gap: var(--space-1);
-    }
-
-    .tab-title {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
+  @media (min-width: 769px) {
+    .tab:hover .tab-close {
+      opacity: 1;
     }
   }
 
-  .modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.6);
-    display: flex;
+  @media (min-width: 769px) {
+    .tab-close:hover {
+      background: var(--bg-overlay);
+      color: var(--accent-red);
+    }
+  }
+
+  .tab-close:focus-visible {
+    opacity: 1;
+    box-shadow: 0 0 0 1px var(--border-accent);
+    border-color: var(--border-accent);
+  }
+
+  /* "+" new-session button: compact floating pill matching the tabs —
+     all-corners rounded, same 26px height, vertically centered, with
+     subtle border/bg that is fully visible (no top/bottom clipping). */
+  .tab-new {
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    z-index: 1000;
+    width: 26px;
+    height: 26px;
+    flex-shrink: 0;
+    margin-left: var(--space-1);
+    border-radius: var(--radius-sm);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-subtle);
+    color: var(--text-muted);
+    cursor: pointer;
+    font-family: var(--font-ui);
+    transition:
+      background var(--transition-fast),
+      color var(--transition-fast),
+      border-color var(--transition-fast),
+      box-shadow var(--transition-fast);
   }
 
-  .modal-box {
+  @media (min-width: 769px) {
+    .tab-new:hover {
+      background: var(--bg-overlay);
+      color: var(--text-primary);
+      border-color: var(--border-default);
+      box-shadow: var(--shadow-sm);
+    }
+  }
+
+  .tab-new:focus-visible {
+    box-shadow: 0 0 0 1px var(--border-accent);
+    border-color: var(--border-accent);
+  }
+
+  /* ── Overflow "more" dropdown ── */
+  .tab-overflow {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    border-left: 1px solid var(--border-subtle);
+  }
+
+  .tab-overflow-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 100%;
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: color var(--transition-fast), background var(--transition-fast);
+  }
+
+  .tab-overflow-trigger.open {
+    color: var(--text-primary);
+    background: var(--bg-surface);
+  }
+
+  @media (min-width: 769px) {
+    .tab-overflow-trigger:hover {
+      color: var(--text-primary);
+      background: var(--bg-surface);
+    }
+  }
+
+  .tab-overflow-trigger:focus-visible {
+    box-shadow: 0 0 0 1px var(--border-accent);
+    border-color: var(--border-accent);
+  }
+
+  .tab-overflow-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: var(--z-dropdown);
+    min-width: 220px;
+    max-width: 280px;
+    max-height: 320px;
+    overflow-y: auto;
+    padding: var(--space-1) 0;
     background: var(--bg-elevated);
-    border: 1px solid var(--border-default);
-    border-radius: 0;
-    padding: var(--space-4);
-    min-width: 280px;
-    max-width: 90vw;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow:
+      inset 0 1px 0 rgba(255, 255, 255, 0.06),
+      var(--shadow-lg);
+  }
+
+  .overflow-item {
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
+    align-items: flex-start;
+    gap: 2px;
+    width: 100%;
+    padding: var(--space-1-5) var(--space-3);
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: var(--font-ui);
+    font-size: var(--font-size-xs);
+    text-align: left;
+    transition: background var(--transition-fast), color var(--transition-fast);
   }
 
-  .modal-title {
-    font-size: var(--font-size-sm);
-    color: var(--text-primary);
-    font-weight: 600;
-    margin: 0;
+  @media (min-width: 769px) {
+    .overflow-item:hover {
+      background: var(--bg-overlay);
+      color: var(--text-primary);
+    }
+  }
+
+  .overflow-item:focus-visible {
+    box-shadow: 0 0 0 1px var(--border-accent);
+    border-color: var(--border-accent);
+  }
+
+  .overflow-item-title {
+    font-weight: var(--font-weight-medium);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+
+  .overflow-item-path {
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
   }
 
   .modal-desc {
-    font-size: var(--font-size-xs);
-    color: var(--text-muted);
+    font-size: var(--font-size-sm);
+    color: var(--text-secondary);
     margin: 0;
   }
 
-  .modal-actions {
-    display: flex;
-    gap: var(--space-2);
-    justify-content: flex-end;
+  /* ── Responsive (mobile) ── */
+  @media (max-width: 640px) {
+    .tab {
+      flex: 0 0 38vw;
+      min-width: 0;
+      max-width: 38vw;
+      width: 38vw;
+      padding: 0 var(--space-2);
+    }
+    .tab-title {
+      max-width: none;
+    }
   }
 
-  .modal-cancel {
-    background: transparent;
-    border: 1px solid var(--border-default);
-    color: var(--text-muted);
-    font-size: 11px;
-    padding: 4px 10px;
-    border-radius: 0;
-    cursor: pointer;
-  }
-
-  .modal-close-only {
-    background: transparent;
-    border: 1px solid var(--border-default);
-    color: var(--text-secondary);
-    font-size: 11px;
-    padding: 4px 10px;
-    border-radius: 0;
-    cursor: pointer;
-  }
-
-  .modal-close-only:hover {
-    background: var(--bg-overlay);
-  }
-
-  .modal-kill {
-    background: #5a0000;
-    border: 1px solid #aa3333;
-    color: #ff8888;
-    font-size: 11px;
-    padding: 4px 10px;
-    border-radius: 0;
-    cursor: pointer;
-  }
-
-  .modal-kill:hover {
-    background: #7a0000;
-  }
-
-  .modal-kill:disabled,
-  .modal-cancel:disabled,
-  .modal-close-only:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  @media (max-width: 768px) {
-    button:hover,
-    button:focus,
-    button:focus-visible,
-    .tab:hover,
-    .tab:focus,
-    .tab:focus-visible,
-    .tab-close:hover,
-    .tab-close:focus,
-    .tab-close:focus-visible {
-      outline: none;
-      background: inherit;
-      color: inherit;
-      border-color: inherit;
-      box-shadow: none;
+  /* ── Reduced motion ── */
+  @media (prefers-reduced-motion: reduce) {
+    :global(.attention-icon) {
+      animation: none;
+    }
+    .tab,
+    .tab-close,
+    .tab-new,
+    .overflow-item {
+      transition: none;
+    }
+    .tab.dragging {
+      transform: none;
     }
   }
 </style>

@@ -41,9 +41,15 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
-          // Cache successful navigation responses
-          const cached = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, cached));
+          // Cache successful navigation responses — only full 200 responses.
+          // The Cache API rejects non-2xx and partial (206) responses.
+          if (response.ok && response.status === 200) {
+            const cached = response.clone();
+            caches
+              .open(CACHE_NAME)
+              .then((cache) => cache.put(event.request, cached))
+              .catch(() => {});
+          }
           return response;
         })
         .catch(() => {
@@ -58,9 +64,15 @@ self.addEventListener('fetch', (event) => {
     caches.match(event.request).then((cached) => {
       if (cached) return cached;
       return fetch(event.request).then((response) => {
-        if (response.ok && event.request.method === 'GET') {
+        // Only cache full 200 responses; the Cache API rejects partial (206)
+        // and opaque responses. Swallow cache errors so a failed cache.put
+        // never breaks the fetch — the response is still returned to the page.
+        if (response.ok && response.status === 200 && event.request.method === 'GET') {
           const cloned = response.clone();
-          caches.open(CACHE_NAME).then((cache) => cache.put(event.request, cloned));
+          caches
+            .open(CACHE_NAME)
+            .then((cache) => cache.put(event.request, cloned))
+            .catch(() => {});
         }
         return response;
       });

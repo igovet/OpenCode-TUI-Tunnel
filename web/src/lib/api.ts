@@ -1,8 +1,68 @@
 import type { SessionInfo, SshConnection } from './types';
+import { showToast } from '$lib/toastStore.svelte';
+
+// ── Error-toast bridge ──
+// Fires a fire-and-forget error toast when an API call fails.
+// The toast is ADDITIVE — existing error flow (throw/return) is preserved.
+// Use withSilentApiErrors() in callers that already display inline error UI.
+
+/** Module-level flag to suppress error toasts (for callers with inline error UI). */
+let _silentApiErrors = false;
+
+/**
+ * Execute a function with API error toasts suppressed.
+ * Use in callers that already display inline error UI (e.g. SshConnectionModal).
+ *
+ * @example
+ *   const result = await withSilentApiErrors(() => createSshConnection({...}));
+ */
+export function withSilentApiErrors<T>(fn: () => T): T {
+  const prev = _silentApiErrors;
+  _silentApiErrors = true;
+  try {
+    return fn();
+  } finally {
+    _silentApiErrors = prev;
+  }
+}
+
+/**
+ * Fire a fire-and-forget error toast. Never throws.
+ * Extracts a human-readable message from the error.
+ */
+function fireErrorToast(err: unknown, fallback: string): void {
+  if (_silentApiErrors) return;
+  try {
+    let message: string;
+    if (typeof err === 'string') {
+      message = err;
+    } else if (err instanceof TypeError && err.message === 'Failed to fetch') {
+      message = 'Network error — check connection';
+    } else if (err && typeof err === 'object') {
+      const e = err as { statusCode?: number; message?: string };
+      if (e.statusCode === 409) {
+        message = 'Maximum sessions reached';
+      } else if (e.statusCode && e.statusCode >= 500) {
+        message = 'Server error — try again later';
+      } else {
+        message = e.message ?? fallback;
+      }
+    } else {
+      message = fallback;
+    }
+    showToast({ message, type: 'error', duration: 6000 });
+  } catch {
+    // Never let toast failure break API logic
+  }
+}
 
 export async function listSessions(): Promise<SessionInfo[]> {
   const res = await fetch('/api/sessions');
-  if (!res.ok) throw new Error('Failed to list sessions');
+  if (!res.ok) {
+    const err = new Error('Failed to list sessions');
+    fireErrorToast(err, 'Failed to list sessions');
+    throw err;
+  }
   return res.json() as Promise<SessionInfo[]>;
 }
 
@@ -34,6 +94,7 @@ export async function launchSession(
       body.error ?? 'Failed to launch session',
     );
     err.statusCode = res.status;
+    fireErrorToast(err, 'Failed to launch session');
     throw err;
   }
   return res.json();
@@ -42,7 +103,11 @@ export async function launchSession(
 // SSH connection CRUD
 export async function listSshConnections(): Promise<SshConnection[]> {
   const res = await fetch('/api/ssh/connections');
-  if (!res.ok) throw new Error('Failed to list SSH connections');
+  if (!res.ok) {
+    const err = new Error('Failed to list SSH connections');
+    fireErrorToast(err, 'Failed to list SSH connections');
+    throw err;
+  }
   const data = await res.json() as { connections: SshConnection[] };
   return data.connections ?? [];
 }
@@ -74,6 +139,7 @@ export async function createSshConnection(body: {
       errBody.error ?? 'Failed to create SSH connection',
     );
     err.statusCode = res.status;
+    fireErrorToast(err, 'Failed to create SSH connection');
     throw err;
   }
   const data = await res.json() as { connection: SshConnection };
@@ -110,6 +176,7 @@ export async function updateSshConnection(
       errBody.error ?? 'Failed to update SSH connection',
     );
     err.statusCode = res.status;
+    fireErrorToast(err, 'Failed to update SSH connection');
     throw err;
   }
   const data = await res.json() as { connection: SshConnection };
@@ -129,6 +196,7 @@ export async function deleteSshConnection(id: string): Promise<void> {
       errBody.error ?? 'Failed to delete SSH connection',
     );
     err.statusCode = res.status;
+    fireErrorToast(err, 'Failed to delete SSH connection');
     throw err;
   }
 }
@@ -149,13 +217,21 @@ export async function testSshConnection(id: string): Promise<{ success: boolean;
 
 export async function checkSshfsAvailability(): Promise<{ available: boolean; path?: string; platform: string }> {
   const res = await fetch('/api/system/sshfs');
-  if (!res.ok) throw new Error('Failed to check SSHFS availability');
+  if (!res.ok) {
+    const err = new Error('Failed to check SSHFS availability');
+    fireErrorToast(err, 'Failed to check SSHFS availability');
+    throw err;
+  }
   return res.json();
 }
 
 export async function terminateSession(id: string): Promise<void> {
   const ok = await deleteSession(id);
-  if (!ok) throw new Error('Failed to terminate session');
+  if (!ok) {
+    const err = new Error('Failed to terminate session');
+    fireErrorToast(err, 'Failed to terminate session');
+    throw err;
+  }
 }
 
 export async function deleteSession(sessionId: string): Promise<boolean> {
@@ -202,6 +278,7 @@ export async function deleteProjectHistory(path: string): Promise<void> {
       errBody.error ?? 'Failed to delete project history entry',
     );
     err.statusCode = res.status;
+    fireErrorToast(err, 'Failed to delete project history entry');
     throw err;
   }
 }

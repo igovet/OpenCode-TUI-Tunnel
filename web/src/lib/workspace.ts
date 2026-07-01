@@ -164,6 +164,24 @@ function createWorkspaceStore() {
         return { ...state, activeTabId: sessionId };
       });
     },
+    /** Move a tab from `fromIndex` to `toIndex` in the tabs array (reorder). */
+    moveTab(fromIndex: number, toIndex: number) {
+      update((state) => {
+        if (
+          fromIndex < 0 ||
+          fromIndex >= state.tabs.length ||
+          toIndex < 0 ||
+          toIndex >= state.tabs.length ||
+          fromIndex === toIndex
+        ) {
+          return state;
+        }
+        const newTabs = [...state.tabs];
+        const [moved] = newTabs.splice(fromIndex, 1);
+        newTabs.splice(toIndex, 0, moved);
+        return { ...state, tabs: newTabs };
+      });
+    },
     updateTabStatus(sessionId: string, status: WorkspaceTab['status']) {
       update((state) => ({
         ...state,

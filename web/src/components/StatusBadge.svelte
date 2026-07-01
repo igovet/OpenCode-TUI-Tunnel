@@ -15,14 +15,14 @@
     gap: 6px;
     padding: 2px 8px;
     border-radius: 0;
-    background: var(--bg-surface, #161b22);
-    border: 1px solid var(--border-default, #30363d);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
   }
 
   .badge-text {
     font-size: 0.75rem;
     font-weight: 600;
     text-transform: uppercase;
-    color: var(--text-secondary, #8b949e);
+    color: var(--text-secondary);
   }
 </style>
