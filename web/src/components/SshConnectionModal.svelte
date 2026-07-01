@@ -1,6 +1,11 @@
 <script lang="ts">
   import type { SshConnection } from '../lib/types';
-  import { createSshConnection, updateSshConnection, testSshConnection } from '../lib/api';
+  import { createSshConnection, updateSshConnection, testSshConnection, withSilentApiErrors } from '../lib/api';
+  import Dialog from './ui/Dialog.svelte';
+  import Input from './ui/Input.svelte';
+  import Button from './ui/Button.svelte';
+  import Badge from './ui/Badge.svelte';
+  import Icon from './ui/Icon.svelte';
 
   let {
     open,
@@ -43,7 +48,7 @@
         authType = connection.authType;
         privateKeyPath = connection.privateKeyPath ?? '';
         passphrase = '';
-        hadPassphrase = !!connection.passphrase; // Track if passphrase was saved
+        hadPassphrase = !!connection.passphrase;
         opencodeProvider = connection.opencodeProvider ?? 'server';
         opencodeCommand = connection.opencodeCommand ?? '';
       } else {
@@ -89,7 +94,7 @@
       let id: string | undefined = connection?.id;
       if (!id) {
         // Need to save first to get an ID for testing
-        const saved = await createSshConnection({
+        const saved = await withSilentApiErrors(() => createSshConnection({
           name: name.trim(),
           host: host.trim(),
           port,
@@ -99,7 +104,7 @@
           passphrase: passphrase.trim() || undefined,
           opencodeProvider,
           opencodeCommand: opencodeCommand.trim() || undefined,
-        });
+        }));
         id = saved.id;
         onSaved(saved);
       }
@@ -152,9 +157,9 @@
         } else {
           body.opencodeCommand = null;
         }
-        result = await updateSshConnection(connection.id, body);
+        result = await withSilentApiErrors(() => updateSshConnection(connection.id, body));
       } else {
-        result = await createSshConnection({
+        result = await withSilentApiErrors(() => createSshConnection({
           name: name.trim(),
           host: host.trim(),
           port,
@@ -164,7 +169,7 @@
           passphrase: passphrase.trim() || undefined,
           opencodeProvider,
           opencodeCommand: opencodeProvider === 'server' ? (opencodeCommand.trim() || undefined) : undefined,
-        });
+        }));
       }
       onSaved(result);
       onClose();
@@ -175,404 +180,318 @@
       saving = false;
     }
   }
-
-  function handleKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape' && !saving && !testing) {
-      onClose();
-    }
-  }
 </script>
 
-{#if open}
-  <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="ssh-modal-title" onclick={() => !saving && !testing && onClose()}>
-    <div class="modal-box" onclick={(e) => e.stopPropagation()} onkeydown={handleKeydown}>
-      <h2 id="ssh-modal-title" class="modal-title">[ {isEditing ? 'EDIT' : 'NEW'} SSH CONNECTION ]</h2>
+<Dialog
+  bind:open
+  title={isEditing ? 'Edit SSH Connection' : 'New SSH Connection'}
+  size="lg"
+  closeOnEscape={!saving && !testing}
+  closeOnBackdrop={!saving && !testing}
+  onClose={onClose}
+>
+  {#snippet children()}
+    {#if error}
+      <div class="form-error" role="alert">{error}</div>
+    {/if}
 
-      {#if error}
-        <div class="form-error" role="alert">{error}</div>
+    <div class="form-grid">
+      <Input
+        label="Name"
+        bind:value={name}
+        placeholder="e.g. production-server"
+        disabled={saving}
+      />
+
+      <Input
+        label="Host"
+        bind:value={host}
+        placeholder="e.g. 192.168.1.100 or server.com"
+        disabled={saving}
+      >
+        {#snippet icon()}
+          <Icon name="globe" size={16} aria-hidden="true" />
+        {/snippet}
+      </Input>
+
+      <Input
+        label="Port"
+        type="number"
+        bind:value={port}
+        disabled={saving}
+        min="1"
+        max="65535"
+      />
+
+      <Input
+        label="Username"
+        bind:value={username}
+        placeholder="e.g. ubuntu"
+        disabled={saving}
+      />
+
+      <div class="segment-field">
+        <span class="segment-label" id="auth-type-label">Auth Type</span>
+        <div class="segment-control" role="radiogroup" aria-labelledby="auth-type-label">
+          <button
+            type="button"
+            class="segment-option"
+            class:segment-active={authType === 'key'}
+            onclick={() => authType = 'key'}
+            disabled={saving}
+            role="radio"
+            aria-checked={authType === 'key'}
+            tabindex={authType === 'key' ? 0 : -1}
+          >
+            <Icon name="key" size={14} aria-hidden="true" />
+            <span>Key</span>
+          </button>
+          <button
+            type="button"
+            class="segment-option"
+            class:segment-active={authType === 'agent'}
+            onclick={() => authType = 'agent'}
+            disabled={saving}
+            role="radio"
+            aria-checked={authType === 'agent'}
+            tabindex={authType === 'agent' ? 0 : -1}
+          >
+            <Icon name="robot" size={14} aria-hidden="true" />
+            <span>Agent</span>
+          </button>
+        </div>
+      </div>
+
+      {#if authType === 'key'}
+        <Input
+          label="Private Key Path"
+          bind:value={privateKeyPath}
+          placeholder="~/.ssh/id_rsa"
+          disabled={saving}
+        >
+          {#snippet icon()}
+            <Icon name="folder" size={16} aria-hidden="true" />
+          {/snippet}
+        </Input>
+
+        <div class="segment-field passphrase-field">
+          <span class="segment-label">Passphrase</span>
+          {#if connection && hadPassphrase}
+            <div class="passphrase-status">
+              <span class="passphrase-indicator">
+                <Icon name="key" size={12} aria-hidden="true" />
+                Passphrase saved
+              </span>
+              <button
+                type="button"
+                class="passphrase-clear-btn"
+                onclick={() => { passphrase = ''; hadPassphrase = false; }}
+                disabled={saving}
+              >
+                Clear passphrase
+              </button>
+            </div>
+            <Input
+              type="password"
+              bind:value={passphrase}
+              placeholder="Enter new passphrase to replace"
+              disabled={saving}
+            />
+          {:else}
+            <Input
+              type="password"
+              bind:value={passphrase}
+              placeholder="Leave blank if none"
+              disabled={saving}
+            />
+          {/if}
+        </div>
       {/if}
 
-      <div class="form-grid">
-        <label class="form-field">
-          <span class="field-label">Name</span>
-          <input type="text" bind:value={name} placeholder="e.g. production-server" disabled={saving} />
-        </label>
-
-        <label class="form-field">
-          <span class="field-label">Host</span>
-          <input type="text" bind:value={host} placeholder="e.g. 192.168.1.100 or server.com" disabled={saving} />
-        </label>
-
-        <label class="form-field">
-          <span class="field-label">Port</span>
-          <input type="number" bind:value={port} min="1" max="65535" disabled={saving} />
-        </label>
-
-        <label class="form-field">
-          <span class="field-label">Username</span>
-          <input type="text" bind:value={username} placeholder="e.g. ubuntu" disabled={saving} />
-        </label>
-
-        <div class="form-field auth-toggle">
-          <span class="field-label">Auth Type</span>
-          <div class="auth-options">
-            <button
-              type="button"
-              class="auth-btn"
-              class:selected={authType === 'key'}
-              onclick={() => authType = 'key'}
-              disabled={saving}
-            >
-              SSH Key
-            </button>
-            <button
-              type="button"
-              class="auth-btn"
-              class:selected={authType === 'agent'}
-              onclick={() => authType = 'agent'}
-              disabled={saving}
-            >
-              Agent
-            </button>
-          </div>
+      <div class="segment-field">
+        <span class="segment-label" id="opencode-provider-label">Opencode Provider</span>
+        <div class="segment-control" role="radiogroup" aria-labelledby="opencode-provider-label">
+          <button
+            type="button"
+            class="segment-option"
+            class:segment-active={opencodeProvider === 'server'}
+            onclick={() => opencodeProvider = 'server'}
+            disabled={saving}
+            role="radio"
+            aria-checked={opencodeProvider === 'server'}
+            tabindex={opencodeProvider === 'server' ? 0 : -1}
+          >
+            <Icon name="globe" size={14} aria-hidden="true" />
+            <span>Server</span>
+          </button>
+          <button
+            type="button"
+            class="segment-option"
+            class:segment-active={opencodeProvider === 'local'}
+            onclick={() => opencodeProvider = 'local'}
+            disabled={saving}
+            role="radio"
+            aria-checked={opencodeProvider === 'local'}
+            tabindex={opencodeProvider === 'local' ? 0 : -1}
+          >
+            <Icon name="folder" size={14} aria-hidden="true" />
+            <span>Local (SSHFS)</span>
+          </button>
         </div>
+      </div>
 
-        {#if authType === 'key'}
-          <label class="form-field">
-            <span class="field-label">Private Key Path</span>
-            <input type="text" bind:value={privateKeyPath} placeholder="~/.ssh/id_rsa" disabled={saving} />
-          </label>
-
-          <label class="form-field passphrase-field">
-            <span class="field-label">Passphrase</span>
-            {#if connection && hadPassphrase}
-              <div class="passphrase-status">
-                <span class="passphrase-indicator">🔒 Passphrase saved</span>
-                <button
-                  type="button"
-                  class="passphrase-clear-btn"
-                  onclick={() => { passphrase = ''; hadPassphrase = false; }}
-                  disabled={saving}
-                >
-                  Clear passphrase
-                </button>
-              </div>
-              <input type="password" bind:value={passphrase} placeholder="Enter new passphrase to replace" disabled={saving} />
-            {:else}
-              <input type="password" bind:value={passphrase} placeholder="Leave blank if none" disabled={saving} />
-            {/if}
-          </label>
-        {/if}
-
-        <div class="form-field provider-toggle">
-          <span class="field-label">Opencode Provider</span>
-          <div class="provider-options">
-            <button
-              type="button"
-              class="provider-btn"
-              class:selected={opencodeProvider === 'server'}
-              onclick={() => opencodeProvider = 'server'}
-              disabled={saving}
-            >
-              🌐 Server
-            </button>
-            <button
-              type="button"
-              class="provider-btn"
-              class:selected={opencodeProvider === 'local'}
-              onclick={() => opencodeProvider = 'local'}
-              disabled={saving}
-            >
-              📁 Local (SSHFS)
-            </button>
-          </div>
-        </div>
-
-        {#if opencodeProvider === 'server'}
-          <label class="form-field">
-            <span class="field-label">Custom Opencode Command (optional)</span>
-            <input type="text" bind:value={opencodeCommand} placeholder="e.g. npx opencode" disabled={saving} />
+      {#if opencodeProvider === 'server'}
+        <Input
+          label="Custom Opencode Command (optional)"
+          bind:value={opencodeCommand}
+          placeholder="e.g. npx opencode"
+          disabled={saving}
+        >
+          {#snippet children()}
             <span class="field-hint">Leave blank to use default: opencode</span>
-          </label>
-        {:else}
-          <div class="form-field sshfs-info">
-            <span class="field-label">Local Mode</span>
-            <p class="sshfs-desc">
-              The remote directory will be mounted locally via SSHFS,
-              and opencode will run on your local machine against
-              the mounted files.
-            </p>
-          </div>
-        {/if}
-      </div>
-
-      {#if testResult}
-        <div class="test-result" class:success={testResult.success} class:failure={!testResult.success} role="status">
-          {testResult.message}
+          {/snippet}
+        </Input>
+      {:else}
+        <div class="sshfs-info">
+          <span class="segment-label">Local Mode</span>
+          <p class="sshfs-desc">
+            The remote directory will be mounted locally via SSHFS,
+            and opencode will run on your local machine against
+            the mounted files.
+          </p>
         </div>
       {/if}
-
-      <div class="modal-actions">
-        <button class="btn modal-cancel" onclick={onClose} disabled={saving || testing}>CANCEL</button>
-        <button class="btn modal-test" onclick={handleTest} disabled={saving || testing}>
-          {testing ? 'TESTING...' : 'TEST'}
-        </button>
-        <button class="btn primary modal-save" onclick={handleSave} disabled={saving || testing}>
-          {saving ? 'SAVING...' : 'SAVE'}
-        </button>
-      </div>
     </div>
-  </div>
-{/if}
+
+    {#if testResult}
+      <div class="test-result-wrapper">
+        <Badge variant={testResult.success ? 'success' : 'danger'} role="status">
+          {testResult.message}
+        </Badge>
+      </div>
+    {/if}
+  {/snippet}
+
+  {#snippet footer()}
+    <Button variant="ghost" onclick={onClose} disabled={saving || testing}>
+      Cancel
+    </Button>
+    <Button
+      variant="secondary"
+      onclick={handleTest}
+      disabled={saving || testing}
+      loading={testing}
+    >
+      {#snippet icon_src()}
+        <Icon name="refresh" size={14} aria-hidden="true" />
+      {/snippet}
+      Test
+    </Button>
+    <Button
+      variant="primary"
+      onclick={handleSave}
+      disabled={saving || testing}
+      loading={saving}
+    >
+      Save
+    </Button>
+  {/snippet}
+</Dialog>
 
 <style>
-  .modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.75);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    padding: var(--space-4);
-  }
-
-  .modal-box {
-    background: var(--bg-surface);
-    border: 1px solid var(--border-default);
-    border-radius: 0;
-    padding: var(--space-6);
-    max-width: 520px;
-    width: 100%;
-    box-sizing: border-box;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-  }
-
-  .modal-title {
-    margin: 0;
-    font-size: var(--font-size-md);
-    font-weight: 700;
-    color: var(--accent-cyan);
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-  }
-
   .form-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: var(--space-3);
   }
 
-  .form-field {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-  }
-
-  .form-field input {
-    background: var(--bg-base);
-    border: 1px solid var(--border-default);
-    color: var(--text-primary);
-    padding: var(--space-2) var(--space-3);
-    font-family: var(--font-mono);
-    font-size: var(--font-size-sm);
-    border-radius: 0;
-    outline: none;
-  }
-
-  .form-field input:focus {
-    border-color: var(--accent-blue);
-  }
-
-  .form-field input:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .field-label {
-    font-size: var(--font-size-xs);
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
-  .auth-toggle {
-    grid-column: span 2;
-  }
-
-  .auth-options {
-    display: flex;
-    gap: var(--space-2);
-  }
-
-  .auth-btn {
-    flex: 1;
-    padding: var(--space-2) var(--space-3);
-    background: var(--bg-base);
-    border: 1px solid var(--border-default);
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: var(--font-size-sm);
-    cursor: pointer;
-    border-radius: 0;
-  }
-
-  .auth-btn.selected {
-    border-color: var(--accent-blue);
-    color: var(--accent-blue);
-    background: rgba(88, 166, 255, 0.1);
-  }
-
-  .auth-btn:hover:not(:disabled) {
-    border-color: var(--accent-blue);
-  }
-
-  .auth-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
   .form-error {
     color: var(--accent-red);
     font-size: var(--font-size-sm);
     padding: var(--space-2);
-    background: rgba(248, 81, 73, 0.1);
+    background: color-mix(in srgb, var(--accent-red) 10%, transparent);
     border: 1px solid var(--accent-red);
+    border-radius: var(--radius-sm);
+    margin-bottom: var(--space-3);
   }
 
-  .test-result {
-    font-size: var(--font-size-sm);
-    padding: var(--space-2);
-    border: 1px solid;
-  }
-
-  .test-result.success {
-    color: var(--accent-green);
-    background: rgba(63, 185, 80, 0.1);
-    border-color: var(--accent-green);
-  }
-
-  .test-result.failure {
-    color: var(--accent-red);
-    background: rgba(248, 81, 73, 0.1);
-    border-color: var(--accent-red);
-  }
-
-  .modal-actions {
+  /* ── Segment control (pill toggle) ── */
+  .segment-field {
     display: flex;
-    gap: var(--space-2);
-    justify-content: flex-end;
-    margin-top: var(--space-2);
-  }
-
-  .modal-cancel {
-    background: transparent;
-    border: 1px solid var(--border-default);
-    color: var(--text-muted);
-    font-size: 11px;
-    padding: 4px 10px;
-    border-radius: 0;
-    cursor: pointer;
-    font-family: var(--font-mono);
-  }
-
-  .modal-cancel:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .modal-test {
-    background: var(--bg-elevated);
-    border: 1px solid var(--accent-cyan);
-    color: var(--accent-cyan);
-    font-size: 11px;
-    padding: 4px 10px;
-    border-radius: 0;
-    cursor: pointer;
-    font-family: var(--font-mono);
-  }
-
-  .modal-test:hover:not(:disabled) {
-    background: rgba(34, 211, 238, 0.1);
-  }
-
-  .modal-test:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .modal-save {
-    background: var(--accent-green);
-    border: 1px solid var(--accent-green);
-    color: var(--bg-base);
-    font-size: 11px;
-    padding: 4px 10px;
-    border-radius: 0;
-    cursor: pointer;
-    font-family: var(--font-mono);
-    font-weight: 700;
-  }
-
-  .modal-save:hover:not(:disabled) {
-    filter: brightness(1.1);
-  }
-
-  .modal-save:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .provider-toggle {
+    flex-direction: column;
+    gap: var(--space-1);
     grid-column: span 2;
   }
 
-  .provider-options {
-    display: flex;
-    gap: var(--space-2);
+  .segment-label {
+    font-family: var(--font-ui);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    color: var(--text-secondary);
   }
 
-  .provider-btn {
+  .segment-control {
+    display: flex;
+    gap: 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+    background: var(--bg-input);
+  }
+
+  .segment-option {
     flex: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-1-5);
     padding: var(--space-2) var(--space-3);
-    background: var(--bg-base);
-    border: 1px solid var(--border-default);
+    border: none;
+    background: transparent;
     color: var(--text-muted);
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
     cursor: pointer;
-    border-radius: 0;
+    transition:
+      background-color var(--transition-fast),
+      color var(--transition-fast),
+      box-shadow var(--transition-fast);
+    white-space: nowrap;
   }
 
-  .provider-btn.selected {
-    border-color: var(--accent-green);
-    color: var(--accent-green);
-    background: rgba(63, 185, 80, 0.1);
+  .segment-option:not(:last-child) {
+    border-right: 1px solid var(--border-muted);
   }
 
-  .provider-btn:hover:not(:disabled) {
-    border-color: var(--accent-green);
+  .segment-option.segment-active {
+    background: var(--bg-overlay);
+    color: var(--text-primary);
+    box-shadow: inset 0 0 0 1px var(--border-accent);
   }
 
-  .provider-btn:disabled {
-    opacity: 0.5;
+  @media (min-width: 769px) {
+    .segment-option:hover:not(:disabled):not(.segment-active) {
+      background: var(--bg-surface);
+      color: var(--text-secondary);
+    }
+  }
+
+  .segment-option:focus-visible {
+    box-shadow: 0 0 0 1px var(--border-accent);
+    border-color: var(--border-accent);
+  }
+
+  .segment-option:disabled {
+    opacity: 0.45;
     cursor: not-allowed;
   }
 
-  .field-hint {
-    font-size: var(--font-size-xs);
-    color: var(--text-muted);
-    margin-top: 2px;
-  }
-
-  .sshfs-info {
-    grid-column: span 2;
-  }
-
+  /* ── Passphrase ── */
   .passphrase-field {
-    grid-column: span 2;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
   }
 
   .passphrase-status {
@@ -583,9 +502,10 @@
   }
 
   .passphrase-indicator {
+    font-family: var(--font-ui);
     font-size: var(--font-size-xs);
     color: var(--accent-green);
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: var(--space-1);
   }
@@ -594,20 +514,30 @@
     background: transparent;
     border: none;
     color: var(--text-muted);
-    font-family: var(--font-mono);
+    font-family: var(--font-ui);
     font-size: var(--font-size-xs);
     cursor: pointer;
     padding: 0;
     text-decoration: underline;
   }
 
-  .passphrase-clear-btn:hover:not(:disabled) {
-    color: var(--accent-red);
+  @media (min-width: 769px) {
+    .passphrase-clear-btn:hover:not(:disabled) {
+      color: var(--accent-red);
+    }
   }
 
   .passphrase-clear-btn:disabled {
-    opacity: 0.5;
+    opacity: 0.45;
     cursor: not-allowed;
+  }
+
+  /* ── SSHFS info ── */
+  .sshfs-info {
+    grid-column: span 2;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
   }
 
   .sshfs-desc {
@@ -617,51 +547,29 @@
     line-height: 1.5;
   }
 
+  .field-hint {
+    font-family: var(--font-ui);
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+  }
+
+  /* ── Test result ── */
+  .test-result-wrapper {
+    margin-top: var(--space-2);
+  }
+
+  /* ── Responsive ── */
   @media (max-width: 640px) {
     .form-grid {
       grid-template-columns: 1fr;
     }
-    .auth-toggle {
+
+    .segment-field {
       grid-column: span 1;
     }
-    .provider-toggle {
-      grid-column: span 1;
-    }
+
     .sshfs-info {
       grid-column: span 1;
-    }
-    .passphrase-field {
-      grid-column: span 1;
-    }
-    .modal-box {
-      padding: var(--space-4);
-    }
-  }
-
-  @media (max-width: 768px) {
-    button:hover,
-    button:focus,
-    button:focus-visible,
-    .auth-btn:hover,
-    .auth-btn:focus,
-    .auth-btn:focus-visible,
-    .provider-btn:hover,
-    .provider-btn:focus,
-    .provider-btn:focus-visible,
-    .modal-cancel:hover,
-    .modal-cancel:focus,
-    .modal-cancel:focus-visible,
-    .modal-test:hover,
-    .modal-test:focus,
-    .modal-test:focus-visible,
-    .modal-save:hover,
-    .modal-save:focus,
-    .modal-save:focus-visible {
-      outline: none;
-      background: inherit;
-      color: inherit;
-      border-color: inherit;
-      box-shadow: none;
     }
   }
 </style>

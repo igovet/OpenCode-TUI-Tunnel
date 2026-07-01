@@ -1,6 +1,6 @@
 import './styles/theme.css';
 import { mount } from 'svelte';
-import { registerServiceWorker } from './lib/pwa';
+import { registerServiceWorker } from './lib/pwa.svelte';
 
 import App from './App.svelte';
 

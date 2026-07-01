@@ -92,9 +92,30 @@ When starting a new version cycle:
 - Server entry: `src/server/index.ts` (Fastify + WS + SPA/static serving)
 - Session orchestration: `src/session/index.ts` (`SessionSupervisor`, tmux-backed)
 - Frontend entry: `web/src/main.ts` → `App.svelte`
+- UI primitive directory: `web/src/components/ui/` — 12 shared primitives (see below)
+- Design-token system: `web/src/styles/theme.css` — 2026 palette (colors, typography, spacing, radius, shadows, motion, z-index)
+- Vite aliases: `$lib` → `web/src/lib`, `$components` → `web/src/components`
 - Key UI files:
-  - `web/src/pages/SessionList.svelte` (launch/list)
-  - `web/src/pages/WorkspaceView.svelte` + `web/src/components/TerminalPane.svelte`
+  - `web/src/pages/SessionList.svelte` — dashboard (launch, tmux discovery, active sessions, recent projects rail)
+  - `web/src/pages/WorkspaceView.svelte` — workspace shell (SessionTabs + TerminalGrid)
+  - `web/src/components/TerminalGrid.svelte` — multi-terminal grid with draggable splitters, pagination indicator
+  - `web/src/components/TerminalPane.svelte` — single pane with chrome header (title, status dot, SSH badge, zoom dropdown), xterm container
+  - `web/src/components/SessionTabs.svelte` — glass pill tab bar with attention glow, icon-based close
+  - `web/src/components/SshConnectionModal.svelte` — Dialog-based SSH connection create/edit, segment controls for auth/provider
+  - `web/src/components/SettingsModal.svelte` — Dialog-based multi-section settings (Notifications/Appearance/Terminal/Keyboard)
+  - `web/src/components/SshConnectionList.svelte` — glass card list with keyboard nav
+  - `web/src/components/PathAutocomplete.svelte` — path input with ARIA combobox autocomplete
+  - `web/src/components/InstallBanner.svelte` — PWA install CTA banner (SessionList mount point)
+  - `web/src/components/MobileKeybar.svelte` — floating glass mobile keybar
+  - `web/src/components/ToastProvider.svelte` — global toast portal (mounted in App.svelte)
+- Removed legacy files: `web/src/components/LaunchForm.svelte`, `web/src/pages/Terminal.svelte`
+
+### Design System (2026)
+Visual language defined in `web/src/styles/theme.css` using CSS custom properties:
+- **Dark dev-tool premium** palette: `--bg-base` `#05060a` (deep), `--bg-surface` `#0a0d12`, `--bg-elevated` `#11141b`, `--bg-overlay` `#181c26`, `--bg-terminal` `#080808`
+- **Glassmorphism contract**: every glass surface uses `backdrop-filter: blur(12-20px)` + 1px `rgba(255,255,255,0.06)` border + inset top highlight. Applied to cards, panes, modals, toasts, dropdowns, keybar.
+- **Typography**: Geist (UI/headings) + JetBrains Mono (terminal), loaded via `index.html` preconnect/preload (not CSS `@import`)
+- **Zero hardcoded hex policy**: all component styles reference `var(--*)` tokens. The only acceptable hex literals are (1) `theme.css :root` definitions, (2) comments, (3) `terminal.ts` xterm ITheme JS literal (xterm API requires literal hex).
 
 ## Runtime State (outside repo)
 
@@ -117,7 +138,7 @@ When starting a new version cycle:
 - Service/PATH behavior matters: autostart captures current PATH; tmux adapter appends common system dirs.
 - Server strips `\x1b[?1003h` / `\x1b[?1003l` to reduce xterm hover flicker.
 - PWA files are static (`web/public/manifest.webmanifest`, `web/public/sw.js`), not plugin-generated.
-- Icon generator does **not** create `icon-maskable-192.png` (still referenced by manifest).
+- Icon generator (`scripts/generate-icons.mjs`) creates all 4 icon variants: `icon-192.png`, `icon-512.png`, `icon-maskable-192.png`, `icon-maskable-512.png`, plus `apple-touch-icon.png`. The T logomark uses blue→cyan→green gradient on dark background.
 - UI text hardcodes max session wording as `(8)`; may drift from config.
 
 ## CI/CD Facts (current workflow)

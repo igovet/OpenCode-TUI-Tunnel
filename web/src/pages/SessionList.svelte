@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import type { SessionInfo, WorkspaceTab, SshConnection } from '../lib/types';
+  import type { SessionInfo, WorkspaceTab, SshConnection, ProjectHistoryRecord, TmuxDiscoverySession } from '../lib/types';
   import {
     listSessions,
     getProjectHistory,
@@ -9,84 +9,271 @@
     attachTmuxSession,
     launchSession,
     deleteSession,
+    getSession,
     listSshConnections,
-    checkSshfsAvailability,
     getRemoteTmuxSessions,
     attachRemoteTmuxSession,
   } from '../lib/api';
+  import { get } from 'svelte/store';
   import { workspace } from '../lib/workspace';
-  import SessionCard from '../components/SessionCard.svelte';
-  import PathAutocomplete from '../components/PathAutocomplete.svelte';
+  import { showToast } from '$lib/toastStore.svelte';
+
+  // NEW structural components (Phase A foundation)
+  import SessionRow from '../components/SessionRow.svelte';
+  import FilterChipGroup, { type FilterOption } from '../components/FilterChipGroup.svelte';
+  import LaunchBar from '../components/LaunchBar.svelte';
+  import SshConnectionSection from '../components/SshConnectionSection.svelte';
+  import EmptyState from '../components/EmptyState.svelte';
+
+  // Reused primitives / existing functional components
   import SettingsModal from '../components/SettingsModal.svelte';
   import SshConnectionModal from '../components/SshConnectionModal.svelte';
-  import SshConnectionList from '../components/SshConnectionList.svelte';
+  import Button from '../components/ui/Button.svelte';
+  import Icon from '../components/ui/Icon.svelte';
+  import Badge from '../components/ui/Badge.svelte';
+  import Dialog from '../components/ui/Dialog.svelte';
+  import InstallBanner from '../components/InstallBanner.svelte';
 
+  // ── Props (unchanged contract with App.svelte) ──
   let { onopenSession } = $props<{ onopenSession: (tab: WorkspaceTab) => void }>();
 
+  // ── Core reactive state (PRESERVED from the original file) ──
   let sessions = $state<SessionInfo[]>([]);
-  let history = $state<import('../lib/types').ProjectHistoryRecord[]>([]);
-  let tmuxSessions = $state<import('../lib/types').TmuxDiscoverySession[]>([]);
-  let remoteTmuxSessions = $state<Map<string, import('../lib/types').TmuxDiscoverySession[]>>(new Map());
+  let history = $state<ProjectHistoryRecord[]>([]);
+  let tmuxSessions = $state<TmuxDiscoverySession[]>([]);
+  let remoteTmuxSessions = $state<Map<string, TmuxDiscoverySession[]>>(new Map());
   let remoteTmuxLoading = $state(false);
   let sshConnections = $state<SshConnection[]>([]);
   let interval: number;
 
-  let activeTab = $state<'local' | 'ssh'>('local');
+  // ── LaunchBar state ──
   let launchCwd = $state('');
-  let selectedSshConnectionId = $state('');
+  let backendId = $state<string>('local');
 
-  interface ErrorModal { title: string; message: string; hint: string }
-  let errorModal = $state<ErrorModal | null>(null);
+  // ── Filter chips state ──
+  let sessionFilter = $state<string>('all');
+
+  // ── SSH section / modals state ──
+  let sshSectionExpanded = $state(false);
   let settingsOpen = $state(false);
-  let killTarget = $state<string | null>(null);
-  let killing = $state(false);
-
   let sshModalOpen = $state(false);
   let sshModalConnection = $state<SshConnection | undefined>(undefined);
 
-  // SSHFS availability check
-  let sshfsStatus = $state<{ available: boolean; path?: string; platform: string } | null>(null);
-  let sshfsChecking = $state(false);
+  // ── Kill confirmation dialog state (kept as Dialog per spec) ──
+  let killTarget = $state<string | null>(null);
+  let killing = $state(false);
 
-  let localSessions = $derived(sessions.filter(s => !s.sshConnectionId));
-  let sshSessions = $derived(sessions.filter(s => s.sshConnectionId));
+  // ── Remove-from-recent confirmation dialog state ──
+  // The X button on a `recent` SessionRow must go through a confirm Dialog
+  // before the project-history entry is deleted.
+  let removeTarget = $state<UnifiedSessionItem | null>(null);
 
-  function showLimitError() {
-    errorModal = {
-      title: 'Session limit reached',
-      message: 'Maximum number of concurrent sessions (8) is already running.',
-      hint: 'Close one or more active sessions to free up a slot, or increase the maxConcurrent limit in your configuration file.'
-    };
+  // Reference to the LaunchBar section element — used by EmptyState CTA to
+  // focus the PathAutocomplete input inside it.
+  let launchSectionEl: HTMLElement | null = null;
+
+  // ───────────────────────────────────────────────────────────────
+  // Unified-session-item model (mt-b.2 data merge)
+  // ───────────────────────────────────────────────────────────────
+  interface UnifiedSessionItem {
+    kind: 'active' | 'discovered' | 'recent';
+    title: string;
+    path: string;
+    backend: 'local' | 'ssh' | 'discovered';
+    status?: string;
+    lastUsedAt?: string | number | Date;
+    sessionId?: string;
+    // Carried through for handlers:
+    sshConnectionId?: string;
+    tmuxName?: string;
   }
 
+  /**
+   * Merge active sessions, discovered tmux sessions, and recent-but-inactive
+   * projects into a single deduplicated, sorted list.
+   *
+   * Sort order: active/running first, then recent-inactive by lastUsedAt desc,
+   * then discovered tmux. Dedup key: a running session takes precedence over a
+   * recent project with the same (cwd, sshConnectionName|local) tuple.
+   */
+  const unifiedItems = $derived.by<UnifiedSessionItem[]>(() => {
+    const usedKeys = new Set<string>();
+    const items: UnifiedSessionItem[] = [];
+
+    // 1) Active sessions (local + SSH).
+    for (const s of sessions) {
+      const key = dedupKey(s.cwd, s.sshConnectionId);
+      usedKeys.add(key);
+      const conn = s.sshConnectionId
+        ? sshConnections.find((c) => c.id === s.sshConnectionId)
+        : undefined;
+      items.push({
+        kind: 'active',
+        title: s.cwd.split('/').pop() || s.id.slice(0, 8),
+        path: s.cwd,
+        backend: s.sshConnectionId ? 'ssh' : 'local',
+        status: s.status,
+        lastUsedAt: s.startedAt,
+        sessionId: s.id,
+        sshConnectionId: s.sshConnectionId,
+        tmuxName: s.tmuxName,
+      });
+      void conn;
+    }
+
+    // 2) Recent history items — ALWAYS show (even if an active session
+    //    exists for the same path) so the user can launch another session
+    //    for the same project. Previously recents were filtered out when an
+    //    active session had the same dedup key, which prevented re-activation.
+    for (const proj of history) {
+      const sshConn = proj.source && proj.source !== 'local'
+        ? sshConnections.find((c) => c.name === proj.source)
+        : undefined;
+      const key = dedupKey(proj.path, sshConn?.id);
+      usedKeys.add(key);
+      items.push({
+        kind: 'recent',
+        title: proj.path.split('/').pop() || proj.path,
+        path: proj.path,
+        backend: proj.source && proj.source !== 'local' ? 'ssh' : 'local',
+        lastUsedAt: proj.last_used_at,
+        sshConnectionId: sshConn?.id,
+      });
+    }
+
+    // 3) Discovered local tmux sessions.
+    for (const ts of tmuxSessions) {
+      items.push({
+        kind: 'discovered',
+        title: ts.name,
+        path: ts.currentPath || ts.name,
+        backend: 'discovered',
+        lastUsedAt: Date.now(),
+        tmuxName: ts.name,
+      });
+    }
+
+    // 4) Discovered remote tmux sessions (per SSH connection).
+    for (const [connId, list] of remoteTmuxSessions) {
+      for (const ts of list) {
+        items.push({
+          kind: 'discovered',
+          title: ts.name,
+          path: ts.currentPath || ts.name,
+          backend: 'discovered',
+          status: ts.attached ? 'attached' : undefined,
+          lastUsedAt: Date.now(),
+          sshConnectionId: connId,
+          tmuxName: ts.name,
+        });
+      }
+    }
+
+    // Sort: active (running first) → recent-inactive by lastUsedAt desc → discovered.
+    const rank: Record<UnifiedSessionItem['kind'], number> = { active: 0, recent: 1, discovered: 2 };
+    items.sort((a, b) => {
+      const ra = rank[a.kind];
+      const rb = rank[b.kind];
+      if (ra !== rb) return ra - rb;
+      // Within active: running before other statuses.
+      if (a.kind === 'active' && b.kind === 'active') {
+        const ar = a.status === 'running' ? 0 : 1;
+        const br = b.status === 'running' ? 0 : 1;
+        if (ar !== br) return ar - br;
+      }
+      const ta = a.lastUsedAt ? new Date(a.lastUsedAt).getTime() : 0;
+      const tb = b.lastUsedAt ? new Date(b.lastUsedAt).getTime() : 0;
+      return tb - ta;
+    });
+
+    return items;
+  });
+
+  function dedupKey(cwd: string, sshConnectionId?: string): string {
+    return `${cwd}::${sshConnectionId ?? 'local'}`;
+  }
+
+  // ── Filtered views for the split sections ──
+  // ONE shared filter chip group filters BOTH sections.
+  function matchesFilter(i: UnifiedSessionItem): boolean {
+    switch (sessionFilter) {
+      case 'local':
+        return i.backend === 'local';
+      case 'ssh':
+        return i.backend === 'ssh';
+      case 'active':
+        return i.kind === 'active';
+      case 'discovered':
+        return i.kind === 'discovered';
+      default:
+        return true;
+    }
+  }
+
+  // Sessions section: active + discovered (available sessions to join).
+  const sessionItems = $derived.by<UnifiedSessionItem[]>(() => {
+    return unifiedItems
+      .filter((i) => i.kind === 'active' || i.kind === 'discovered')
+      .filter(matchesFilter);
+  });
+
+  // Projects section: recent only (where the user launches new sessions).
+  const projectItems = $derived.by<UnifiedSessionItem[]>(() => {
+    return unifiedItems.filter((i) => i.kind === 'recent').filter(matchesFilter);
+  });
+
+  const filterOptions = $derived.by<FilterOption[]>(() => {
+    let localCount = 0, sshCount = 0, activeCount = 0, discoveredCount = 0;
+    for (const i of unifiedItems) {
+      if (i.kind === 'active') activeCount++;
+      else if (i.kind === 'discovered') discoveredCount++;
+      if (i.backend === 'local') localCount++;
+      else if (i.backend === 'ssh') sshCount++;
+    }
+    return [
+      { value: 'all', label: 'All', count: unifiedItems.length },
+      { value: 'local', label: 'Local', count: localCount },
+      { value: 'ssh', label: 'SSH', count: sshCount },
+      { value: 'active', label: 'Active', count: activeCount },
+      { value: 'discovered', label: 'Discovered', count: discoveredCount },
+    ];
+  });
+
+  // ───────────────────────────────────────────────────────────────
+  // Data loading (PRESERVED behavior)
+  // ───────────────────────────────────────────────────────────────
   async function load() {
     try {
       const [sessRes, histRes, tmuxRes, sshRes] = await Promise.all([
         listSessions(),
         getProjectHistory(),
         getTmuxSessions(),
-        listSshConnections()
+        listSshConnections(),
       ]);
       sessions = sessRes;
       history = histRes;
-      tmuxSessions = tmuxRes.filter(t => !t.isManaged);
+      tmuxSessions = tmuxRes.filter((t) => !t.isManaged);
       sshConnections = sshRes;
+      // If the currently-selected backend no longer exists, reset to local.
+      if (backendId !== 'local' && !sshConnections.some((c) => c.id === backendId)) {
+        backendId = 'local';
+      }
     } catch (e) {
+      showToast({ message: 'Failed to load dashboard data', type: 'error', duration: 6000 });
       console.error(e);
     }
   }
 
-  // Load remote tmux sessions for all SSH connections (slower refresh)
   async function loadRemoteTmuxSessions() {
     if (sshConnections.length === 0) return;
     remoteTmuxLoading = true;
     try {
       const results = await Promise.all(
-        sshConnections.map(conn => getRemoteTmuxSessions(conn.id))
+        sshConnections.map((conn) => getRemoteTmuxSessions(conn.id)),
       );
-      const newMap = new Map<string, import('../lib/types').TmuxDiscoverySession[]>();
+      const newMap = new Map<string, TmuxDiscoverySession[]>();
       sshConnections.forEach((conn, idx) => {
-        newMap.set(conn.id, results[idx].filter(t => !t.isManaged));
+        newMap.set(conn.id, results[idx].filter((t) => !t.isManaged));
       });
       remoteTmuxSessions = newMap;
     } catch (e) {
@@ -94,11 +281,6 @@
     } finally {
       remoteTmuxLoading = false;
     }
-  }
-
-  // Manual reload function for remote tmux sessions
-  async function reloadRemoteTmuxSessions() {
-    await loadRemoteTmuxSessions();
   }
 
   onMount(() => {
@@ -111,6 +293,9 @@
     if (interval) clearInterval(interval);
   });
 
+  // ───────────────────────────────────────────────────────────────
+  // Terminal dimensions helper (PRESERVED)
+  // ───────────────────────────────────────────────────────────────
   function getSavedTermDims(): { cols: number; rows: number } {
     try {
       const cols = parseInt(localStorage.getItem('termLastCols') ?? '');
@@ -122,66 +307,9 @@
     return { cols: 220, rows: 50 };
   }
 
-  async function doLaunch(cwd: string, sshId?: string) {
-    const { cols, rows } = getSavedTermDims();
-    const { session } = await launchSession(cwd, cols, rows, sshId);
-    openSessionTab(session);
-    await load();
-  }
-
-  async function handleLaunch() {
-    if (!launchCwd) return;
-    try {
-      const sshId = activeTab === 'ssh' ? selectedSshConnectionId || undefined : undefined;
-      await doLaunch(launchCwd, sshId);
-      launchCwd = '';
-    } catch (e: unknown) {
-      const err = e as Error & { statusCode?: number };
-      if (err.statusCode === 409) {
-        showLimitError();
-      } else {
-        console.error(e);
-      }
-    }
-  }
-
-  async function handleAttach(name: string) {
-    try {
-      const { cols, rows } = getSavedTermDims();
-      const res = await attachTmuxSession(name, cols, rows);
-      if (res) {
-        await load();
-        const s = sessions.find(s => s.id === res.sessionId);
-        if (s) openSessionTab(s);
-      }
-    } catch (e: unknown) {
-      const err = e as Error & { statusCode?: number };
-      if (err.statusCode === 409) {
-        showLimitError();
-      } else {
-        console.error(e);
-      }
-    }
-  }
-
-  async function handleRemoteAttach(name: string, sshConnectionId: string) {
-    try {
-      const { cols, rows } = getSavedTermDims();
-      const res = await attachRemoteTmuxSession(sshConnectionId, name, cols, rows);
-      if (res) {
-        await load();
-        const s = sessions.find(s => s.id === res.sessionId);
-        if (s) openSessionTab(s);
-      }
-    } catch (e: unknown) {
-      const err = e as Error & { statusCode?: number };
-      if (err.statusCode === 409) {
-        showLimitError();
-      } else {
-        console.error(e);
-      }
-    }
-  }
+  // ───────────────────────────────────────────────────────────────
+  // Interactions — launch, resume, open, attach, kill (mt-d.1/d.2/d.3)
+  // ───────────────────────────────────────────────────────────────
 
   function openSessionTab(session: SessionInfo) {
     const sshConn = session.sshConnectionId
@@ -199,7 +327,119 @@
     });
   }
 
-  const killTargetSession = $derived(killTarget ? sessions.find((session) => session.id === killTarget) ?? null : null);
+  // Shared launch primitive (preserves the 409 → toast / generic → toast behavior).
+  async function doLaunch(cwd: string, sshId?: string): Promise<void> {
+    const { cols, rows } = getSavedTermDims();
+    const { session } = await launchSession(cwd, cols, rows, sshId);
+    openSessionTab(session);
+    await load();
+  }
+
+  function handleLaunchError(e: unknown) {
+    const err = e as Error & { statusCode?: number };
+    if (err.statusCode === 409) {
+      showToast({
+        message: 'Session limit reached (8). Close a session or raise the maxConcurrent limit.',
+        type: 'warning',
+        duration: 6000,
+      });
+    } else {
+      const msg = err.message ?? 'Failed to launch session';
+      showToast({ message: msg, type: 'error', duration: 6000 });
+    }
+  }
+
+  // LaunchBar onLaunch handler — replaces the old handleLaunch.
+  async function onLaunchBarLaunch(cwd: string, backend: string) {
+    if (!cwd) return;
+    const sshId = backend === 'local' ? undefined : backend;
+    try {
+      await doLaunch(cwd, sshId);
+      launchCwd = '';
+      backendId = 'local';
+    } catch (e) {
+      handleLaunchError(e);
+    }
+  }
+
+  // SessionRow onResume (recent) — mt-d.1.
+  // If an active session already exists for this path+backend, activate its tab;
+  // otherwise launch a fresh one.
+  // SessionRow onResume (recent) — ALWAYS launches a fresh session, even if
+  // an active session already exists for the same path+backend. The user
+  // wants multiple concurrent sessions per project. Only the "Open" button on
+  // an active session row activates the existing session.
+  async function resumeProject(item: UnifiedSessionItem) {
+    try {
+      await doLaunch(item.path, item.sshConnectionId);
+    } catch (e) {
+      handleLaunchError(e);
+    }
+  }
+
+  // SessionRow onOpen (active) — mt-d.2.
+  function openActive(item: UnifiedSessionItem) {
+    if (!item.sessionId) return;
+    const s = sessions.find((x) => x.id === item.sessionId);
+    if (s) {
+      const existingTab = get(workspace).tabs.find((t) => t.sessionId === s.id);
+      if (existingTab) {
+        workspace.activateTab(s.id);
+      } else {
+        openSessionTab(s);
+      }
+    }
+  }
+
+  // SessionRow onAttach (discovered) — mt-d.2.
+  async function attachDiscovered(item: UnifiedSessionItem) {
+    if (!item.tmuxName) return;
+    try {
+      const { cols, rows } = getSavedTermDims();
+      const res = item.sshConnectionId
+        ? await attachRemoteTmuxSession(item.sshConnectionId, item.tmuxName, cols, rows)
+        : await attachTmuxSession(item.tmuxName, cols, rows);
+      if (res) {
+        await load();
+        const s = sessions.find((x) => x.id === res.sessionId);
+        if (s) openSessionTab(s);
+      }
+    } catch (e) {
+      handleLaunchError(e);
+    }
+  }
+
+  // SessionRow onResume (recent) — reuses the same logic as resumeProject.
+  async function resumeRecent(item: UnifiedSessionItem) {
+    await resumeProject(item);
+  }
+
+  // SessionRow onRemove (recent) — opens a confirmation Dialog. The actual
+  // deletion happens in confirmRemove() below, only after the user confirms.
+  // mt-d.1 hide/remove capability.
+  function deleteRecent(item: UnifiedSessionItem) {
+    removeTarget = item;
+  }
+
+  async function confirmRemove() {
+    if (!removeTarget) return;
+    const item = removeTarget;
+    removeTarget = null;
+    try {
+      await deleteProjectHistory(item.path);
+      await load();
+      showToast({ message: 'Removed from recent projects', type: 'info', duration: 3000 });
+    } catch (e) {
+      const err = e as Error & { statusCode?: number };
+      const msg = err.message ?? 'Failed to remove project history entry';
+      showToast({ message: msg, type: 'error', duration: 6000 });
+    }
+  }
+
+  // ── Kill confirmation (kept as Dialog) ──
+  const killTargetSession = $derived(
+    killTarget ? sessions.find((session) => session.id === killTarget) ?? null : null,
+  );
 
   async function confirmKill() {
     if (!killTarget || killing) return;
@@ -212,45 +452,21 @@
       }
       killTarget = null;
       await load();
+      showToast({ message: 'Session terminated', type: 'info', duration: 3000 });
     } catch (error) {
       console.error(error);
+      showToast({ message: 'Failed to terminate session', type: 'error', duration: 6000 });
     } finally {
       killing = false;
     }
   }
 
-  async function handleHistoryLaunch(proj: import('../lib/types').ProjectHistoryRecord) {
-    let sshId: string | undefined = undefined;
-    if (proj.source && proj.source !== 'local') {
-      // Try to find matching SSH connection
-      const matchingConn = sshConnections.find(c => c.name === proj.source);
-      if (matchingConn) {
-        sshId = matchingConn.id;
-      } else {
-        console.warn(`SSH connection "${proj.source}" no longer exists, launching locally`);
-      }
-    }
-    try {
-      await doLaunch(proj.path, sshId);
-    } catch (e: unknown) {
-      const err = e as Error & { statusCode?: number };
-      if (err.statusCode === 409) {
-        showLimitError();
-      } else {
-        console.error('Failed to launch from history:', e);
-      }
-    }
+  // Row kill action (exposed via context-menu style action on active rows).
+  function requestKill(item: UnifiedSessionItem) {
+    if (item.sessionId) killTarget = item.sessionId;
   }
 
-  async function handleHistoryDelete(path: string) {
-    try {
-      await deleteProjectHistory(path);
-      await load();
-    } catch (e) {
-      console.error('Failed to delete project history:', e);
-    }
-  }
-
+  // ── SSH connection modal ──
   function openSshModal(conn?: SshConnection) {
     sshModalConnection = conn;
     sshModalOpen = true;
@@ -263,302 +479,239 @@
 
   function onSshSaved() {
     load();
+    loadRemoteTmuxSessions();
   }
 
-  // Check SSHFS availability when SSH tab becomes active
-  async function checkSshfs() {
-    if (sshfsChecking) return;
-    sshfsChecking = true;
-    try {
-      sshfsStatus = await checkSshfsAvailability();
-    } catch (e) {
-      console.error('Failed to check SSHFS availability:', e);
-      sshfsStatus = { available: false, platform: 'unknown' };
-    } finally {
-      sshfsChecking = false;
-    }
+  // SshConnectionSection callbacks.
+  function onSshTest(_conn: SshConnection) {
+    // SshConnectionList handles its own test UI/badges; this is a passthrough
+    // hook for future toast-on-failure enhancement.
   }
 
-  $effect(() => {
-    if (activeTab === 'ssh') {
-      checkSshfs();
-    }
-  });
+  function onSshDelete(_conn: SshConnection) {
+    // Deletion is handled inside SshConnectionList with its own confirm flow;
+    // refresh after a tick so counts stay in sync.
+    window.setTimeout(() => load(), 100);
+  }
 
-  function getSshfsInstallInstructions(platform: string): string {
-    switch (platform) {
-      case 'linux':
-        return 'Linux (Debian/Ubuntu): sudo apt install sshfs\nLinux (RHEL/Fedora): sudo yum install fuse-sshfs';
-      case 'darwin':
-        return 'macOS: brew install macfuse && brew install sshfs';
-      default:
-        return 'Install sshfs for your platform to use Local (SSHFS) mode.';
+  // ── EmptyState CTA: focus the LaunchBar path input ──
+  function focusLaunchBar() {
+    const target = launchSectionEl?.querySelector<HTMLInputElement>(
+      'input[type="text"], input:not([type])',
+    );
+    if (target) {
+      target.focus();
+    } else {
+      requestAnimationFrame(() => {
+        launchSectionEl?.querySelector<HTMLInputElement>('input')?.focus();
+      });
     }
   }
 </script>
 
 <div class="dashboard">
-  <header class="dash-header">
-    <h1><span class="prompt"></span>WORKSTATION DASHBOARD</h1>
-    <button class="btn btn-settings" onclick={() => settingsOpen = true} aria-label="Open settings">
-      <svg class="icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-        <path d="M12 15a3 3 0 100-6 3 3 0 000 6z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-        <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-2 2 2 2 0 01-2-2v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83 0 2 2 0 010-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 01-2-2 2 2 0 012-2h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 010-2.83 2 2 0 012.83 0l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 012-2 2 2 0 012 2v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 0 2 2 0 010 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 012 2 2 2 0 01-2 2h-.09a1.65 1.65 0 00-1.51 1z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      </svg>
-      <span class="btn-text">SETTINGS</span>
-    </button>
+  <!-- ────────────────────────────────────────────────────
+       HEADER — thin app bar: logo+title left, SSH icon + settings right
+       ──────────────────────────────────────────────────── -->
+  <header class="dash-header" aria-label="Dashboard header">
+    <div class="header-title">
+      <span class="header-logo" aria-hidden="true">
+        <Icon name="terminal" size={20} />
+      </span>
+      <h1 class="header-name" data-view-focus>OpenCode TUI Tunnel</h1>
+    </div>
+    <div class="header-actions">
+      <Button
+        variant="ghost"
+        size="md"
+        icon
+        aria-label="Open settings"
+        onclick={() => settingsOpen = true}
+      >
+        <Icon name="settings" size={20} />
+      </Button>
+    </div>
   </header>
 
-  <!-- Environment Tabs -->
-  <div class="env-tabs" role="tablist" aria-label="Environment">
-    <button
-      class="env-tab"
-      class:active={activeTab === 'local'}
-      onclick={() => activeTab = 'local'}
-      role="tab"
-      aria-selected={activeTab === 'local'}
-      aria-controls="local-panel"
-      id="local-tab"
-    >
-      <span class="env-icon">💻</span> LOCAL
-    </button>
-    <button
-      class="env-tab"
-      class:active={activeTab === 'ssh'}
-      onclick={() => activeTab = 'ssh'}
-      role="tab"
-      aria-selected={activeTab === 'ssh'}
-      aria-controls="ssh-panel"
-      id="ssh-tab"
-    >
-      <span class="env-icon">🌐</span> SSH
-    </button>
+  <div class="install-banner-slot">
+    <InstallBanner />
   </div>
 
-  <main class="dash-grid">
-    <div class="dash-col main-col">
-      {#if activeTab === 'local'}
-        <!-- Local Tab Content -->
-        <section class="panel launch-panel">
-          <h2 class="panel-title">[ LAUNCH ]</h2>
-          <div class="panel-content">
-            <p class="panel-desc">Start a new isolated terminal session in the specified directory.</p>
-            <div class="launch-form">
-              <PathAutocomplete
-                value={launchCwd}
-                onchange={(v: string) => launchCwd = v}
-                onselect={(v: string) => { launchCwd = v; }}
-              />
-              <button class="btn primary launch-btn" onclick={handleLaunch}>EXECUTE</button>
-            </div>
-          </div>
-        </section>
+  <!-- Single-column full-width flow. No two-column grid. -->
+  <main class="dash-flow">
 
-        {#if activeTab === 'local' && tmuxSessions.length > 0}
-          <section class="panel">
-            <h2 class="panel-title">[ TMUX_DISCOVERY ]</h2>
-            <div class="panel-content list-compact">
-              {#each tmuxSessions as ts}
-                <div class="list-item">
-                  <span class="tmux-name">{ts.name} <span class="dim">({ts.windows}w)</span></span>
-                  <button class="btn btn-small" onclick={() => handleAttach(ts.name)}>ATTACH</button>
-                </div>
-              {/each}
-            </div>
-          </section>
-        {/if}
+    <!-- ────────────────────────────────────────────────
+         §1 LaunchBar — compact command bar (primary entry point)
+         ──────────────────────────────────────────────── -->
+    <section class="launch-section" aria-label="New session" bind:this={launchSectionEl}>
+      <LaunchBar
+        bind:cwd={launchCwd}
+        bind:backendId={backendId}
+        {sshConnections}
+        onLaunch={onLaunchBarLaunch}
+        disabled={false}
+      />
+    </section>
 
-        {#if localSessions.length > 0}
-          <section class="panel">
-            <h2 class="panel-title">[ ACTIVE_SESSIONS ]</h2>
-            <div class="panel-content grid-cards">
-              {#each localSessions as session (session.id)}
-                <SessionCard
-                  {session}
-                  onConnect={() => openSessionTab(session)}
-                  onKill={(id: string) => killTarget = id}
-                />
-              {/each}
-            </div>
-          </section>
+    <!-- ────────────────────────────────────────────────
+         §2 Filter chips (shared across both sections below)
+         ──────────────────────────────────────────────── -->
+    <div class="sessions-heading-row">
+      <FilterChipGroup
+        options={filterOptions}
+        bind:value={sessionFilter}
+      />
+    </div>
+
+    <!-- ────────────────────────────────────────────────
+         §3 SESSIONS — active + discovered (available to join)
+         ──────────────────────────────────────────────── -->
+    <section class="sessions-section" aria-label="Sessions">
+      <div class="section-heading">
+        <span class="section-heading-icon" aria-hidden="true"><Icon name="terminal" size={16} /></span>
+        <h2 class="section-heading-text">Sessions</h2>
+        {#if sessionItems.length > 0}
+          <Badge variant="default">{sessionItems.length}</Badge>
         {/if}
+      </div>
+
+      {#if sessionItems.length === 0}
+        <EmptyState
+          icon="terminal"
+          title="No active sessions"
+          description={unifiedItems.length === 0
+            ? 'Launch a new session above or resume a recent project to get started.'
+            : 'No sessions match this filter.'}
+          cta={unifiedItems.length === 0 ? { label: 'Start a session', onclick: focusLaunchBar } : undefined}
+        />
       {:else}
-        <!-- SSH Tab Content -->
-        <section class="panel launch-panel ssh-launch-panel">
-          <h2 class="panel-title">[ LAUNCH_REMOTE ]</h2>
-          <div class="panel-content">
-            <p class="panel-desc">Launch a terminal session on a remote server via SSH.</p>
-            <div class="launch-form ssh-launch-form">
-              <select
-                class="ssh-select"
-                bind:value={selectedSshConnectionId}
-                aria-label="SSH connection"
-              >
-                <option value="">Select connection...</option>
-                {#each sshConnections as conn (conn.id)}
-                  <option value={conn.id}>
-                    {conn.name} ({conn.username}@{conn.host}) — {conn.opencodeProvider === 'local' ? 'Local' : 'Server'}
-                  </option>
-                {/each}
-              </select>
-              <PathAutocomplete
-                value={launchCwd}
-                onchange={(v: string) => launchCwd = v}
-                onselect={(v: string) => { launchCwd = v; }}
-                sshConnectionId={activeTab === 'ssh' ? selectedSshConnectionId || undefined : undefined}
-              />
-              <button
-                class="btn primary launch-btn"
-                onclick={handleLaunch}
-                disabled={!selectedSshConnectionId}
-              >
-                EXECUTE
-              </button>
-            </div>
-            <button class="btn manage-conn-btn" onclick={() => openSshModal()}>
-              + NEW CONNECTION
-            </button>
-          </div>
-        </section>
-
-        <!-- TMUX Discovery for all SSH connections -->
-        <section class="panel">
-          <h2 class="panel-title">
-            [ TMUX_DISCOVERY ]
-            <button class="btn btn-small reload-btn" onclick={reloadRemoteTmuxSessions} aria-label="Reload remote tmux sessions">
-              ↻
-            </button>
-          </h2>
-          <div class="panel-content list-compact">
-            {#if remoteTmuxLoading}
-              <div class="list-item"><span class="dim">Loading remote sessions...</span></div>
-            {:else}
-              {#each sshConnections as conn (conn.id)}
-                {@const connSessions = remoteTmuxSessions.get(conn.id) ?? []}
-                {#if connSessions.length > 0}
-                  <div class="conn-group">
-                    <div class="conn-group-header">{conn.name}</div>
-                    {#each connSessions as ts}
-                      <div class="list-item">
-                        <span class="tmux-name">{ts.name} <span class="dim">({ts.windows}w)</span></span>
-                        <button class="btn btn-small" onclick={() => handleRemoteAttach(ts.name, conn.id)}>ATTACH</button>
-                      </div>
-                    {/each}
-                  </div>
-                {/if}
-              {/each}
-              {#if ![...remoteTmuxSessions.values()].some(sessions => sessions.length > 0)}
-                <div class="list-item"><span class="dim">No remote tmux sessions found</span></div>
-              {/if}
-            {/if}
-          </div>
-        </section>
-
-        {#if sshfsStatus && !sshfsStatus.available}
-          <section class="panel sshfs-banner-panel">
-            <div class="panel-content">
-              <div class="sshfs-banner" role="alert">
-                <div class="sshfs-banner-header">
-                  <span class="sshfs-banner-icon">⚠️</span>
-                  <span class="sshfs-banner-title">SSHFS is not installed on this machine.</span>
-                </div>
-                <p class="sshfs-banner-text">
-                  Local (SSHFS) mode will not be available.
-                </p>
-                <div class="sshfs-banner-instructions">
-                  <p class="sshfs-banner-subtitle">Install instructions:</p>
-                  <pre class="sshfs-install-cmd">{getSshfsInstallInstructions(sshfsStatus.platform)}</pre>
-                </div>
-              </div>
-            </div>
-          </section>
-        {/if}
-
-        {#if sshSessions.length > 0}
-          <section class="panel">
-            <h2 class="panel-title">[ ACTIVE_SSH_SESSIONS ]</h2>
-            <div class="panel-content grid-cards">
-              {#each sshSessions as session (session.id)}
-                <SessionCard
-                  {session}
-                  onConnect={() => openSessionTab(session)}
-                  onKill={(id: string) => killTarget = id}
-                />
-              {/each}
-            </div>
-          </section>
-        {/if}
-
-        <section class="panel">
-          <h2 class="panel-title">[ SAVED_CONNECTIONS ]</h2>
-          <div class="panel-content">
-            <SshConnectionList
-              connections={sshConnections}
-              onEdit={(conn) => openSshModal(conn)}
-              onRefresh={load}
+        <div class="session-list" role="list" aria-label="Sessions list">
+          {#each sessionItems as item (item.kind + '::' + (item.sessionId ?? item.tmuxName ?? item.path) + '::' + (item.sshConnectionId ?? 'local'))}
+            <SessionRow
+              {item}
+              onOpen={openActive}
+              onAttach={attachDiscovered}
+              onResume={resumeRecent}
+              onRemove={deleteRecent}
+              onKill={requestKill}
             />
-            <button class="btn manage-conn-btn bottom" onclick={() => openSshModal()}>
-              + NEW CONNECTION
-            </button>
-          </div>
-        </section>
-      {/if}
-    </div>
-
-    <div class="dash-col side-col">
-      {#if history.length > 0}
-        <section class="panel">
-          <h2 class="panel-title">[ RECENT_PROJECTS ]</h2>
-          <div class="panel-content list-compact">
-            {#each history as proj}
-              <div class="list-item history-item">
-                <span class="path-text" title={proj.path}>{proj.path}</span>
-                <div class="history-actions">
-                  {#if proj.source && proj.source !== 'local'}
-                    <span class="source-badge ssh-source">{proj.source}</span>
-                  {:else}
-                    <span class="source-badge local-source">local</span>
-                  {/if}
-                  <button class="btn btn-small init-btn" onclick={async () => await handleHistoryLaunch(proj)}>INIT</button>
-                  <button class="btn btn-small delete-btn" onclick={async () => await handleHistoryDelete(proj.path)} title="Remove from history">del</button>
-                </div>
-              </div>
-            {/each}
-          </div>
-        </section>
+          {/each}
+        </div>
       {/if}
 
-    </div>
+      {#if remoteTmuxLoading}
+        <p class="loading-hint"><span class="spinner-inline" aria-hidden="true"></span> Loading remote tmux sessions…</p>
+      {/if}
+    </section>
+
+    <!-- ────────────────────────────────────────────────
+         §4 PROJECTS — recent projects (launch new sessions from here)
+         ──────────────────────────────────────────────── -->
+    <section class="sessions-section projects-section" aria-label="Recent projects">
+      <div class="section-heading">
+        <span class="section-heading-icon" aria-hidden="true"><Icon name="folder" size={16} /></span>
+        <h2 class="section-heading-text">Projects</h2>
+        {#if projectItems.length > 0}
+          <Badge variant="default">{projectItems.length}</Badge>
+        {/if}
+      </div>
+
+      {#if projectItems.length === 0}
+        <EmptyState
+          icon="folder"
+          title="No recent projects"
+          description={unifiedItems.length === 0
+            ? 'Launch a session above and it will appear here for quick re-launch.'
+            : 'No projects match this filter.'}
+        />
+      {:else}
+        <div class="session-list" role="list" aria-label="Projects list">
+          {#each projectItems as item (item.kind + '::' + (item.sessionId ?? item.tmuxName ?? item.path) + '::' + (item.sshConnectionId ?? 'local'))}
+            <SessionRow
+              {item}
+              onOpen={openActive}
+              onAttach={attachDiscovered}
+              onResume={resumeRecent}
+              onRemove={deleteRecent}
+              onKill={requestKill}
+            />
+          {/each}
+        </div>
+      {/if}
+    </section>
+
+    <!-- ────────────────────────────────────────────────
+         §3 SSH Connections — on-demand collapsible section
+         ──────────────────────────────────────────────── -->
+    {#if unifiedItems.length > 0}
+    <section class="ssh-section-wrap" aria-label="SSH connections management">
+      <SshConnectionSection
+        bind:expanded={sshSectionExpanded}
+        connections={sshConnections}
+        onAdd={() => openSshModal()}
+        onEdit={(conn) => openSshModal(conn)}
+        onTest={onSshTest}
+        onDelete={onSshDelete}
+        onRefresh={load}
+      />
+    </section>
+    {/if}
+
   </main>
 
-  {#if errorModal}
-    <div class="modal-overlay" onclick={() => errorModal = null} role="dialog" aria-modal="true" aria-labelledby="modal-title">
-      <div class="modal-box" onclick={(e) => e.stopPropagation()}>
-        <div class="modal-header">
-          <span class="modal-icon">⚠</span>
-          <h2 id="modal-title" class="modal-title">{errorModal.title}</h2>
+  <!-- ────────────────────────────────────────────────────
+       Kill confirmation Dialog (preserved)
+       ──────────────────────────────────────────────────── -->
+  {#if killTarget}
+    <Dialog
+      open={true}
+      title="Kill Session?"
+      size="sm"
+      closeOnBackdrop={!killing}
+      closeOnEscape={!killing}
+      onClose={() => { if (!killing) killTarget = null; }}
+    >
+      {#snippet children()}
+        <div class="dialog-kill-body">
+          <div class="dialog-kill-icon"><Icon name="warning" size={24} aria-hidden="true" /></div>
+          <p class="dialog-message">This will terminate the process.</p>
+          {#if killTargetSession}
+            <p class="dialog-hint" title={killTargetSession.cwd}>{killTargetSession.cwd}</p>
+          {/if}
         </div>
-        <p class="modal-message">{errorModal.message}</p>
-        <p class="modal-hint">{errorModal.hint}</p>
-        <button class="btn primary modal-close" onclick={() => errorModal = null}>DISMISS</button>
-      </div>
-    </div>
+      {/snippet}
+      {#snippet footer()}
+        <Button variant="secondary" size="md" onclick={() => killTarget = null} disabled={killing}>Cancel</Button>
+        <Button variant="danger" size="md" onclick={confirmKill} disabled={killing} loading={killing}>Kill</Button>
+      {/snippet}
+    </Dialog>
   {/if}
 
-  {#if killTarget}
-    <div class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="kill-modal-title" onclick={() => !killing && (killTarget = null)}>
-      <div class="modal-box kill-modal" onclick={(e) => e.stopPropagation()}>
-        <h2 id="kill-modal-title" class="modal-title">[ KILL SESSION? ]</h2>
-        <p class="modal-message">This will terminate the process.</p>
-        {#if killTargetSession}
-          <p class="modal-hint" title={killTargetSession.cwd}>{killTargetSession.cwd}</p>
-        {/if}
-        <div class="kill-actions">
-          <button class="btn modal-cancel" onclick={() => killTarget = null} disabled={killing}>CANCEL</button>
-          <button class="btn modal-kill" onclick={confirmKill} disabled={killing}>KILL</button>
+  <!-- ────────────────────────────────────────────────────
+       Remove-from-recent confirmation Dialog
+       ──────────────────────────────────────────────────── -->
+  {#if removeTarget}
+    <Dialog
+      open={true}
+      title="Remove Project?"
+      size="sm"
+      closeOnBackdrop={true}
+      closeOnEscape={true}
+      onClose={() => { removeTarget = null; }}
+    >
+      {#snippet children()}
+        <div class="dialog-remove-body">
+          <p class="dialog-message">Remove this project from recent?</p>
+          {#if removeTarget.path}
+            <p class="dialog-hint" title={removeTarget.path}>{removeTarget.path}</p>
+          {/if}
         </div>
-      </div>
-    </div>
+      {/snippet}
+      {#snippet footer()}
+        <Button variant="secondary" size="md" onclick={() => { removeTarget = null; }}>Cancel</Button>
+        <Button variant="danger" size="md" onclick={confirmRemove}>Remove</Button>
+      {/snippet}
+    </Dialog>
   {/if}
 
   <SettingsModal open={settingsOpen} onClose={() => settingsOpen = false} />
@@ -574,616 +727,278 @@
 <style>
   .dashboard {
     width: 100%;
-    min-height: 100%;
-    padding: var(--space-4) var(--space-6);
-    font-family: var(--font-mono);
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-6);
+    font-family: var(--font-ui);
     box-sizing: border-box;
-    overflow-x: hidden;
+    /* overflow-x: clip prevents horizontal scroll WITHOUT forcing overflow-y
+       to compute to `auto` (which `overflow-x: hidden` does per CSS spec). This
+       keeps the dashboard as a non-scroll flex child so the parent
+       .app-content scrolls naturally — no double/nested scroll containers on
+       narrow phones. */
+    overflow-x: clip;
+    overflow-y: visible;
   }
 
+  /* ── Header ── */
   .dash-header {
-    margin-bottom: var(--space-4);
-    padding-bottom: var(--space-3);
-    border-bottom: 1px solid var(--border-accent);
     display: flex;
     align-items: center;
     justify-content: space-between;
     gap: var(--space-4);
+    margin-bottom: var(--space-5);
+    padding-bottom: var(--space-4);
+    border-bottom: 1px solid var(--border-subtle);
   }
 
-  .btn-settings {
+  .header-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+  }
+
+  .header-logo {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    border-radius: 0;
-    font-family: var(--font-mono);
-    font-size: var(--font-size-xs);
-    font-weight: 600;
-    letter-spacing: 1px;
-    cursor: pointer;
-    border: 1px solid var(--border-default);
-    background: var(--bg-elevated);
-    color: var(--text-muted);
-    transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
+    justify-content: center;
+    color: var(--accent-green);
+    filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent-green) 40%, transparent));
+    flex-shrink: 0;
+  }
+
+  .header-name {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
     flex-shrink: 0;
   }
 
-  .btn-settings .icon {
-    width: 20px;
-    height: 20px;
-    flex-shrink: 0;
+  /* ── Install banner slot ── */
+  .install-banner-slot {
+    margin-bottom: var(--space-5);
   }
 
-  .btn-settings:hover {
-    border-color: var(--accent-blue);
-    color: var(--accent-blue);
-    background: rgba(88, 166, 255, 0.1);
+  /* ── Single-column flow ── */
+  .dash-flow {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-6);
+    flex: 1;
   }
 
-  @media (max-width: 768px) {
-    .btn-settings .btn-text {
+  /* ── Section heading shared style ── */
+  .section-heading {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+  }
+
+  .section-heading-icon {
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-secondary);
+  }
+
+  .section-heading-text {
+    margin: 0;
+    font-size: var(--font-size-md);
+    font-weight: var(--font-weight-semibold);
+    color: var(--text-secondary);
+    letter-spacing: 0.02em;
+  }
+
+  /* ── §1 Launch section ── */
+  .launch-section {
+    width: 100%;
+  }
+
+  /* ── §2 Sessions section ── */
+  .sessions-section {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .sessions-section.empty-state-active {
+    /* Keep the empty state in its normal position (compact, at the top of
+       the sessions section). Center it horizontally so the empty-state
+       text/card is not left-aligned. */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    text-align: center;
+  }
+
+  /* The EmptyState component renders a Card (width:100%) with a
+     .empty-state-inner (max-width:320px). When the sessions section is
+     wider than the card's inner content, the inner block sits left-aligned
+     inside the card-body. These rules center the empty-state card and its
+     inner content within the sessions section. */
+  .sessions-section :global(.empty-state) {
+    justify-content: center;
+  }
+  .sessions-section :global(.empty-state .card-body) {
+    display: flex;
+    justify-content: center;
+  }
+
+  .sessions-heading-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    flex-wrap: wrap;
+    margin-bottom: var(--space-4);
+    touch-action: pan-x pan-y;
+    overflow-x: auto;
+  }
+
+  .session-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .loading-hint {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    margin: var(--space-3) 0 0 0;
+    font-size: var(--font-size-sm);
+    color: var(--text-muted);
+    font-style: italic;
+  }
+
+  .spinner-inline {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--border-subtle);
+    border-top-color: var(--text-secondary);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* ── §3 SSH section wrapper ── */
+  .ssh-section-wrap {
+    width: 100%;
+    border-top: 1px solid var(--border-muted);
+    padding-top: var(--space-4);
+  }
+
+  /* ── Kill dialog (preserved styles) ── */
+  .dialog-kill-body {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-3);
+  }
+
+  .dialog-kill-icon {
+    display: inline-flex;
+    color: var(--accent-red);
+  }
+
+  .dialog-message {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-normal);
+  }
+
+  .dialog-hint {
+    margin: 0;
+    color: var(--text-secondary);
+    font-size: var(--font-size-sm);
+    line-height: var(--line-height-normal);
+    border-left: 2px solid var(--border-default);
+    padding-left: var(--space-3);
+    font-family: var(--font-mono);
+    word-break: break-all;
+  }
+
+  /* ── Remove-from-recent dialog (shares .dialog-message/.dialog-hint) ── */
+  .dialog-remove-body {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-3);
+  }
+
+  /* ── Responsive ── */
+  @media (max-width: 640px) {
+    .dashboard {
+      padding: var(--space-3);
+      /* On mobile the dashboard must be fully scrollable vertically — no
+         fixed-height clipping. Content flows naturally and the parent
+         .app-content[data-view='home'] scrolls. overflow-x: clip (not hidden)
+         prevents horizontal scroll without forcing overflow-y to auto. */
+      overflow-x: clip;
+      overflow-y: visible;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .dash-header {
+      gap: var(--space-2);
+      margin-bottom: var(--space-3);
+      padding-bottom: var(--space-3);
+    }
+
+    .dash-flow {
+      gap: var(--space-4);
+    }
+
+    .install-banner-slot {
+      margin-bottom: var(--space-3);
+    }
+
+    .sessions-heading-row {
+      flex-direction: column;
+      align-items: flex-start;
+      flex-wrap: nowrap;
+      gap: var(--space-2);
+    }
+
+    /* Session rows: drop the path/status-text columns on very narrow
+       screens so a row fits the viewport width without horizontal
+       clipping. Title + badge + action remain. */
+    .session-list :global(.session-row) {
+      gap: var(--space-2);
+    }
+  }
+
+  /* Extra-narrow phones (≤400px): hide the path and status-text segments
+     of session rows so each row is a single line that fits the viewport. */
+  @media (max-width: 400px) {
+    .session-list :global(.session-row .path),
+    .session-list :global(.session-row .status-text) {
       display: none;
     }
   }
 
-  h1 {
-    margin: 0;
-    font-size: var(--font-size-lg);
-    font-weight: 700;
-    color: var(--text-primary);
-    letter-spacing: 1px;
-    text-shadow: 0 0 10px rgba(88, 166, 255, 0.3);
-  }
-
-  /* Environment Tabs */
-  .env-tabs {
-    display: flex;
-    gap: var(--space-2);
-    margin-bottom: var(--space-6);
-    border-bottom: 1px solid var(--border-default);
-  }
-
-  .env-tab {
-    padding: var(--space-2) var(--space-4);
-    background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: var(--font-size-sm);
-    font-weight: 600;
-    letter-spacing: 1px;
-    cursor: pointer;
-    transition: color var(--transition-fast), border-color var(--transition-fast);
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
-  .env-tab:hover {
-    color: var(--text-secondary);
-  }
-
-  .env-tab.active {
-    color: var(--accent-blue);
-    border-bottom-color: var(--accent-blue);
-  }
-
-  .env-icon {
-    font-size: var(--font-size-sm);
-  }
-
-  .dash-grid {
-    display: grid;
-    grid-template-columns: 2fr 1fr;
-    gap: var(--space-6);
-    align-items: start;
-  }
-
-  .dash-col {
-    min-width: 0;
-  }
-
-  @media (max-width: 900px) {
-    .dash-grid {
-      grid-template-columns: minmax(0, 1fr);
-    }
-  }
-
-  .panel {
-    background: var(--bg-surface);
-    border: 1px solid var(--border-default);
-    border-radius: 0;
-    overflow: hidden;
-    margin-bottom: var(--space-6);
-    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-  }
-
-  .panel-title {
-    font-size: var(--font-size-sm);
-    margin: 0;
-    padding: var(--space-2) var(--space-4);
-    background: var(--bg-elevated);
-    color: var(--accent-blue);
-    border-bottom: 1px solid var(--border-default);
-    letter-spacing: 0.05em;
-  }
-
-  .panel-content {
-    padding: var(--space-4);
-  }
-
-  .launch-panel {
-    border-color: var(--accent-green);
-    overflow: visible;
-  }
-  .launch-panel .panel-title {
-    background: rgba(63, 185, 80, 0.1);
-    color: var(--accent-green);
-    border-bottom-color: var(--accent-green);
-  }
-
-  .ssh-launch-panel {
-    border-color: var(--accent-cyan);
-  }
-  .ssh-launch-panel .panel-title {
-    background: rgba(34, 211, 238, 0.1);
-    color: var(--accent-cyan);
-    border-bottom-color: var(--accent-cyan);
-  }
-
-  .panel-desc {
-    color: var(--text-secondary);
-    margin-bottom: var(--space-4);
-    font-size: var(--font-size-sm);
-  }
-
-  .launch-form {
-    display: flex;
-    gap: var(--space-3);
-    align-items: center;
-    width: 100%;
-    box-sizing: border-box;
-  }
-
-  .ssh-launch-form {
-    flex-wrap: wrap;
-  }
-
-  .ssh-select {
-    background: var(--bg-base);
-    border: 1px solid var(--border-default);
-    color: var(--text-primary);
-    padding: var(--space-2) var(--space-3);
-    font-family: var(--font-mono);
-    font-size: var(--font-size-sm);
-    border-radius: 0;
-    outline: none;
-    min-width: 200px;
-    flex-shrink: 0;
-  }
-
-  .ssh-select:focus {
-    border-color: var(--accent-cyan);
-  }
-
-  .ssh-select:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .manage-conn-btn {
-    margin-top: var(--space-3);
-    padding: var(--space-2) var(--space-3);
-    background: transparent;
-    border: 1px solid var(--border-default);
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: var(--font-size-xs);
-    letter-spacing: 1px;
-    cursor: pointer;
-    border-radius: 0;
-  }
-
-  .manage-conn-btn:hover {
-    border-color: var(--accent-cyan);
-    color: var(--accent-cyan);
-  }
-
-  .manage-conn-btn.bottom {
-    margin-top: var(--space-4);
-    width: 100%;
-  }
-
-  .launch-btn {
-    font-weight: 700;
-    letter-spacing: 1px;
-  }
-
-  .grid-cards {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr));
-    gap: var(--space-4);
-  }
-
-  .list-compact {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-
-  .list-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    background: var(--bg-base);
-    border: 1px solid var(--border-muted);
-    border-radius: 0;
-    transition: border-color var(--transition-fast);
-    min-width: 0;
-  }
-
-  .list-item:hover {
-    border-color: var(--border-default);
-    background: var(--bg-elevated);
-  }
-
-  .history-item {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--space-1);
-    padding: var(--space-2) var(--space-3);
-  }
-
-  .path-text {
-    font-size: var(--font-size-sm);
-    color: var(--text-primary);
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 100%;
-    direction: rtl;
-    text-align: left;
-  }
-
-  .source-badge {
-    font-size: var(--font-size-xs);
-    padding: 1px 6px;
-    font-family: var(--font-mono);
-    border: 1px solid;
-    white-space: nowrap;
-    flex-shrink: 0;
-  }
-
-  .history-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
-  .local-source {
-    color: var(--text-muted);
-    border-color: var(--border-muted);
-    background: var(--bg-base);
-  }
-
-  .ssh-source {
-    color: var(--accent-cyan);
-    border-color: var(--accent-cyan);
-    background: rgba(34, 211, 238, 0.1);
-  }
-
-  .tmux-name {
-    font-size: var(--font-size-sm);
-    color: var(--accent-cyan);
-    font-weight: 600;
-  }
-  .dim {
-    color: var(--text-muted);
-    font-weight: 400;
-  }
-
-  .conn-group {
-    margin-bottom: var(--space-2);
-  }
-
-  .conn-group-header {
-    font-size: var(--font-size-xs);
-    color: var(--text-secondary);
-    padding: var(--space-1) var(--space-2);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    border-bottom: 1px solid var(--border-muted);
-    margin-bottom: var(--space-1);
-  }
-
-  .panel-title {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
-  .reload-btn {
-    padding: 0 6px;
-    font-size: var(--font-size-sm);
-    background: transparent;
-    border: 1px solid var(--border-default);
-    color: var(--text-muted);
-    cursor: pointer;
-    border-radius: 2px;
-    line-height: 1;
-  }
-
-  .reload-btn:hover {
-    border-color: var(--accent-cyan);
-    color: var(--accent-cyan);
-  }
-
-  .btn-small {
-    padding: 2px 8px;
-    font-size: var(--font-size-xs);
-  }
-
-  .init-btn {
-    padding: 2px var(--space-2);
-    background: var(--bg-elevated);
-    border: 1px solid var(--accent-green);
-    color: var(--accent-green);
-    font-family: var(--font-mono);
-    font-size: var(--font-size-xs);
-    font-weight: 600;
-    letter-spacing: 1px;
-    cursor: pointer;
-    border-radius: 3px;
-    transition: background var(--transition-fast), border-color var(--transition-fast), color var(--transition-fast);
-    flex-shrink: 0;
-  }
-
-  .init-btn:hover {
-    background: rgba(63, 185, 80, 0.15);
-    border-color: var(--accent-green);
-    color: var(--accent-green);
-  }
-
-  .delete-btn {
-    font-size: var(--font-size-sm);
-    padding: 2px 6px;
-    color: var(--text-muted);
-    border: 1px solid var(--border-muted);
-    background: transparent;
-    line-height: 1;
-    margin-left: auto;
-  }
-
-  .delete-btn:hover {
-    color: var(--accent-red, #ef4444);
-    border-color: var(--accent-red, #ef4444);
-    background: rgba(239, 68, 68, 0.1);
-  }
-
-  @media (max-width: 640px) {
-    .dashboard {
-      padding: var(--space-3) var(--space-3);
-    }
-
-    .launch-form {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    .ssh-launch-form {
-      flex-direction: column;
-    }
-
-    .ssh-select {
-      width: 100%;
-      min-width: auto;
-    }
-
-    .launch-btn {
-      width: 100%;
-      justify-content: center;
-    }
-
-    .grid-cards {
-      grid-template-columns: 1fr;
-    }
-
-    .history-actions {
-      flex-wrap: wrap;
-    }
-  }
-
-  .modal-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.75);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    padding: var(--space-4);
-  }
-
-  .modal-box {
-    background: var(--bg-surface);
-    border: 1px solid var(--accent-red, #f85149);
-    border-radius: 0;
-    padding: var(--space-6);
-    max-width: 480px;
-    width: 100%;
-    box-sizing: border-box;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-  }
-
-  .modal-header {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-  }
-
-  .modal-icon {
-    font-size: 1.5rem;
-    color: var(--accent-red, #f85149);
-    line-height: 1;
-  }
-
-  .modal-title {
-    margin: 0;
-    font-size: var(--font-size-md, 1rem);
-    font-weight: 700;
-    color: var(--accent-red, #f85149);
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-  }
-
-  .modal-message {
-    margin: 0;
-    color: var(--text-primary);
-    font-size: var(--font-size-sm);
-    line-height: 1.5;
-  }
-
-  .modal-hint {
-    margin: 0;
-    color: var(--text-secondary);
-    font-size: var(--font-size-sm);
-    line-height: 1.5;
-    border-left: 2px solid var(--border-accent, #30363d);
-    padding-left: var(--space-3);
-  }
-
-  .modal-close {
-    align-self: flex-end;
-    font-weight: 700;
-    letter-spacing: 1px;
-  }
-
-  .kill-modal {
-    border-color: var(--border-default);
-    max-width: 420px;
-  }
-
-  .kill-actions {
-    display: flex;
-    gap: var(--space-2);
-    justify-content: flex-end;
-  }
-
-  .modal-cancel {
-    background: transparent;
-    border: 1px solid var(--border-default);
-    color: var(--text-muted);
-    font-size: 11px;
-    padding: 4px 10px;
-    border-radius: 0;
-    cursor: pointer;
-  }
-
-  .modal-kill {
-    background: #5a0000;
-    border: 1px solid #aa3333;
-    color: #ff8888;
-    font-size: 11px;
-    padding: 4px 10px;
-    border-radius: 0;
-    cursor: pointer;
-  }
-
-  .modal-kill:hover {
-    background: #7a0000;
-  }
-
-  .modal-cancel:disabled,
-  .modal-kill:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  /* SSHFS availability banner */
-  .sshfs-banner-panel {
-    border-color: var(--accent-yellow, #d29922);
-  }
-
-  .sshfs-banner {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-
-  .sshfs-banner-header {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-
-  .sshfs-banner-icon {
-    font-size: var(--font-size-md);
-  }
-
-  .sshfs-banner-title {
-    font-weight: 600;
-    color: var(--accent-yellow, #d29922);
-    font-size: var(--font-size-sm);
-  }
-
-  .sshfs-banner-text {
-    margin: 0;
-    color: var(--text-secondary);
-    font-size: var(--font-size-sm);
-  }
-
-  .sshfs-banner-instructions {
-    background: var(--bg-base);
-    border: 1px solid var(--border-muted);
-    padding: var(--space-3);
-    margin-top: var(--space-1);
-  }
-
-  .sshfs-banner-subtitle {
-    margin: 0 0 var(--space-2) 0;
-    font-size: var(--font-size-xs);
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-  }
-
-  .sshfs-install-cmd {
-    margin: 0;
-    font-family: var(--font-mono);
-    font-size: var(--font-size-xs);
-    color: var(--text-secondary);
-    line-height: 1.6;
-    white-space: pre-wrap;
-  }
-
-  @media (max-width: 768px) {
-    button:hover,
-    button:focus,
-    button:focus-visible,
-    .btn:hover,
-    .btn:focus,
-    .btn:focus-visible,
-    .btn-settings:hover,
-    .btn-settings:focus,
-    .btn-settings:focus-visible,
-    .list-item:hover,
-    .env-tab:hover,
-    .manage-conn-btn:hover {
-      outline: none;
-      background: inherit;
-      color: inherit;
-      border-color: inherit;
-      box-shadow: none;
+  @media (prefers-reduced-motion: reduce) {
+    .spinner-inline {
+      animation: none;
+      opacity: 0.5;
     }
   }
 </style>

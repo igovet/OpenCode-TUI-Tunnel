@@ -6,6 +6,7 @@ import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { workspace } from './workspace';
 import { appView } from './appView';
 import { showBrowserNotification } from './notifications';
+import { getSettings } from './settings';
 import '@xterm/xterm/css/xterm.css';
 
 type OpencodeNotifyType =
@@ -141,7 +142,7 @@ export class TerminalManager {
       cols,
       rows,
       cursorBlink: true,
-      scrollback: 10000,
+      scrollback: getSettings().scrollback,
       allowProposedApi: true,
       altClickMovesCursor: false,
       macOptionIsMeta: true,
@@ -158,14 +159,110 @@ export class TerminalManager {
       customGlyphs: true,
       allowTransparency: false,
       theme: {
-        background: '#0d1117',
-        foreground: '#e6edf3',
+        // Literal hex required by xterm.js ITheme (JS, not CSS — cannot use
+        // var(--*) tokens). Values mirror the 2026 palette in theme.css :root:
+        //   background       → --bg-terminal (#080808)
+        //   foreground       → --text-primary (#f0f2f5)
+        //   cursor           → --terminal-cursor (#58a6ff)
+        //   cursorAccent     → --bg-terminal  (#080808) — fg of a block cursor
+        //   selection*       → --accent-blue (#58a6ff) at low alpha, so the
+        //                     selection highlight is on-brand but never reads
+        //                     as a solid "noble blue" strip. Explicitly setting
+        //                     these overrides xterm's built-in default blue
+        //                     (#264F78) which could otherwise bleed into the
+        //                     dead canvas area beyond the cell grid (the
+        //                     bottom+right residual gap reported by the user).
+        //
+        //   #080808 matches the background color the opencode TUI paints via
+        //   escape sequences (sampled via Playwright pixel analysis). The
+        //   previous value (#0b0e13) caused a visible color mismatch in the
+        //   sub-row quantization gap at the canvas bottom: the TUI painted
+        //   #080808 while the container showed #0b0e13 → 12px visible strip.
+        //   Unifying to #080808 makes the gap invisible.
+        background: '#080808',
+        foreground: '#f0f2f5',
         cursor: '#58a6ff',
+        cursorAccent: '#080808',
+        selectionBackground: '#58a6ff40',
+        selectionInactiveBackground: '#58a6ff1a',
+        selectionForeground: '#f0f2f5',
+        // Scrollbar is hidden via CSS (TerminalPane .xterm-viewport), but set
+        // dark sliders too so xterm never paints a blue/lit slider.
+        scrollbarSliderBackground: '#ffffff14',
+        scrollbarSliderHoverBackground: '#ffffff24',
+        scrollbarSliderActiveBackground: '#ffffff33',
+        overviewRulerBorder: '#080808',
       },
     });
 
     this.fitAddon = new FitAddon();
     this.terminal.loadAddon(this.fitAddon);
+
+    // ── FitAddon scrollbar-width patch ──
+    // FitAddon.proposeDimensions() reserves a fixed 14px
+    // (ViewportConstants.DEFAULT_SCROLL_BAR_WIDTH) for a vertical scrollbar
+    // whenever `scrollback > 0` and `overviewRuler.width` is falsy. Our
+    // TerminalPane CSS hides the native scrollbar entirely
+    // (`.xterm-viewport { scrollbar-width: none }` + `::-webkit-scrollbar
+    // { display: none }`), so the real scrollbar width is 0 — but FitAddon
+    // still subtracts 14px, shrinking the computed cols and leaving a dead
+    // gap on the right of the terminal (the "terminal pushed left" bug).
+    //
+    // Wrap proposeDimensions to substitute the ACTUAL viewport scrollbar
+    // width (offsetWidth - clientWidth, which is 0 when the scrollbar is
+    // hidden via CSS) for FitAddon's hardcoded 14px default. Until the
+    // viewport element exists (pre-open), fall back to 0 since our CSS hides
+    // the scrollbar unconditionally.
+    //
+    // When the CSS-hidden scrollbar is detected (realScrollbarWidth === 0),
+    // FitAddon still deducted its 14px DEFAULT_SCROLL_BAR_WIDTH in
+    // `dims.cols`, so we must RECOMPUTE cols from the full parent width with
+    // zero scrollbar reservation. We use the renderer's measured CSS cell
+    // width for an exact result. As a fallback when renderDims isn't ready
+    // yet (e.g., a fit() before the WebGL/DOM renderer attached), we add back
+    // the integer number of cells FitAddon over-deducted: 14px / cellWidth.
+    const originalPropose = this.fitAddon.proposeDimensions.bind(this.fitAddon);
+    this.fitAddon.proposeDimensions = () => {
+      const dims = originalPropose();
+      if (!dims || !this.terminal.element) {
+        return dims;
+      }
+      const viewport = this.terminal.element.querySelector<HTMLElement>('.xterm-viewport');
+      const realScrollbarWidth = viewport
+        ? Math.max(0, viewport.offsetWidth - viewport.clientWidth)
+        : 0;
+      if (realScrollbarWidth !== 0) {
+        return dims; // a real scrollbar is visible — trust FitAddon's deduction
+      }
+      // Scrollbar is hidden via CSS — FitAddon wrongly reserved 14px.
+      const parent = this.terminal.element.parentElement;
+      if (!parent) {
+        return dims;
+      }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const core = (this.terminal as any)._core;
+      const renderDims = core?._renderService?.dimensions?.css;
+      const cellW = renderDims?.cell?.width;
+      const padL = parseInt(window.getComputedStyle(this.terminal.element).paddingLeft) || 0;
+      const padR = parseInt(window.getComputedStyle(this.terminal.element).paddingRight) || 0;
+      const available = Math.max(0, parent.clientWidth - (padL + padR));
+      if (cellW && cellW > 0) {
+        const cols = Math.max(2, Math.floor(available / cellW));
+        return { cols, rows: dims.rows };
+      }
+      // Fallback (renderer not yet attached): add back the cells FitAddon
+      // over-deducted. DEFAULT_SCROLL_BAR_WIDTH (14px) / current cellWidth.
+      // Derive current cellWidth from the existing terminal grid vs canvas.
+      const curCellW =
+        this.terminal.cols > 0 && (renderDims?.canvas?.width ?? 0) > 0
+          ? (renderDims!.canvas!.width as number) / this.terminal.cols
+          : (renderDims?.cell?.width as number) || 8;
+      if (curCellW > 0) {
+        const addBack = Math.floor(14 / curCellW);
+        return { cols: Math.max(2, dims.cols + addBack), rows: dims.rows };
+      }
+      return dims;
+    };
 
     // Load clipboard addon for OSC 52 clipboard support (e.g., opencode copy)
     const clipboardAddon = new ClipboardAddon();

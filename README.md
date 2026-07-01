@@ -16,15 +16,16 @@ It exists to make terminal-first workflows easier to access anywhere: local lapt
 
 ## 🚀 Key Features
 
-- 🖥️ **Browser-first terminal access** for `opencode` sessions (desktop + mobile)
-- 🧠 **tmux-backed persistence** so sessions survive refreshes and restarts
-- ➕ **Launch and manage multiple sessions** from a single web UI
-- 📱 **Mobile-friendly controls** with an extended terminal key bar (Esc, Tab, Ctrl, arrows)
-- ⚡ **PWA support** for installable app-like experience
-- 🔔 **Browser notifications** when `opencode` asks questions or requests permissions
-- 🔧 **Operational CLI tools** (`start`, `status`, `sessions`, `config`, `doctor`)
-- 🚀 **Autostart support** on Linux (`systemd --user`) and macOS (`LaunchAgent`)
-- 🔒 **Cloudflare Tunnel + Zero Trust friendly** for secure remote access
+- 🖥️ **Browser terminal** — Multi-terminal grid with draggable splitters, resizable panes, keyboard navigation (Ctrl/Cmd+Arrow), context menu, and drag-to-reorder tabs
+- 📊 **Dashboard** — Modern glass dashboard with Recent Projects hero section, filter chips (All/Local/SSH/Active/Discovered), unified sessions list, compact LaunchBar, and collapsible SSH connections panel
+- 🎨 **2026 Design System** — Dark dev-tool premium visual language with glassmorphism surfaces, Geist + JetBrains Mono typography, soft radius tokens, and full accessibility pass (skip-link, focus-trap, reduced-motion, contrast AA)
+- 🧩 **12 UI primitives** — Reusable component library: Button (4 variants), Card (glass/solid), Dialog (focus-trap), Input, Select, Toggle, Tooltip, Badge, StatusDot, Icon, Toast, ToastProvider — all CSS-token-driven
+- 🔔 **Global toast system** — Non-blocking notifications for errors (auto-dismiss 5s, pause on hover, swipe on mobile, aria-live)
+- ⚙️ **Multi-section Settings** — Dedicated settings modal with Notifications, Appearance (reduce motion, font size), Terminal (scrollback, font size), and Keyboard sections
+- 🔐 **SSH connection management** — Glass card list with keyboard navigation, Dialog-based create/edit with segment controls (auth type: Key/Agent, provider: Server/Local)
+- 📱 **Mobile-adaptive interface** — Floating glass keybar with 44px touch targets, adaptive layouts, reduced-motion and reduced-transparency fallbacks
+- 📲 **PWA with install CTA** — Full PWA support with install banner (consuming `beforeinstallprompt`), iOS instructions, update toast with reload, offline-ready
+- 🧠 **Multi-session tmux management** — Launch, attach, kill, and organize multiple concurrent terminal sessions backed by tmux
 
 ## 🎯 Use Cases
 
@@ -51,6 +52,7 @@ Continue below for full docs:
 - [Installation](#installation)
 - [Usage](#usage)
 - [CLI Reference](#cli-reference)
+- [2026 UI Redesign](#-2026-ui-redesign)
 - [SSH Connections](#ssh-connections)
 - [Cloudflare Tunnel Setup (Zero Trust Authentication)](#cloudflare-tunnel-setup-zero-trust-authentication)
 - [Changelog](#changelog)
@@ -510,6 +512,58 @@ Key settings:
 - `server.port` — default: 4096
 - `paths.allowedRoots` — directories where new sessions can be launched
 - `sessions.maxConcurrent` — max concurrent sessions (default: 8)
+
+## 🎨 2026 UI Redesign
+
+The visual interface has been fully redesigned with a "dark dev-tool premium" aesthetic inspired by tools like Linear, Warp, and Arc.
+
+### Design System
+- **Colors:** Deep `#05060a` base with glass surfaces (`backdrop-filter: blur(12-20px)` + subtle 1px border), accent-blue highlights, and gradient accents
+- **Typography:** Geist for UI text, JetBrains Mono for terminal content — loaded via non-blocking preconnects
+- **Spacing/Radius:** Soft radius tokens (4px/6px/8px) for cards and dialogs; 0px radius for terminal panes for a crisp edge
+- **Zero hardcoded hex policy** — all colors, spacing, and typography reference CSS custom properties from a centralized design token system
+
+### Dashboard
+
+The main landing page (`SessionList`) has been redesigned from scratch:
+
+- **Recent Projects hero** — Full-width card grid showing the most recent sessions with one-click "Resume" buttons, backend badges, and relative timestamps
+- **Filter chips** — `All / Local / SSH / Active / Discovered` filter buttons to narrow the session list
+- **Unified sessions list** — Merged view of local, SSH, and auto-discovered sessions with consistent row structure (status dot, title, path, backend badge, running time, "Open" action)
+- **Compact LaunchBar** — A streamlined command bar with path autocomplete (ARIA combobox), backend selector, and "Run session" button
+- **Collapsible SSH panel** — SSH connections section collapsed by default; expand to see connection cards with keyboard navigation
+
+### Workspace & Multi-Terminal Grid
+
+The workspace view (`WorkspaceView`) powers the multi-terminal experience:
+
+- **Chrome-style tabs** — Compact 30px pill tabs with close-on-hover, circular "+" button inside tab strip, drag-to-reorder, right-click context menu (Close / Close others / Close right / Move left / Move right)
+- **Terminal panes** — Slim 28px chrome header with pane title, status dot, backend badge, zoom dropdown; active pane gets glow ring; inactive chrome dims while xterm stays full brightness
+- **Draggable splitters** — Pointer Events-based drag-resize with 15% minimum pane width for reliable resizing
+- **Keyboard navigation** — `Ctrl/Cmd+ArrowLeft/Right` for pane switching (capture-phase to override xterm word-jump)
+
+### Components & Primitives
+
+12 reusable UI primitives live in `web/src/components/ui/`:
+
+- `Button`, `Card`, `Dialog`, `Input`, `Select`, `Toggle`, `Tooltip`, `Icon`, `Badge`, `StatusDot`, `Toast`, `ToastProvider`
+
+All components use `var(--*)` design tokens and follow the zero-hardcoded-hex policy.
+
+### Accessibility
+
+- Skip-link as first focusable element
+- Focus-trap in all dialog-based modals
+- ARIA combobox on PathAutocomplete
+- WCAG AA contrast on all text (4.5:1 minimum)
+- `prefers-reduced-motion` disables hover/active transforms
+- `prefers-reduced-transparency` reduces glass blur
+
+### Push Notifications & Toasts
+
+- Global `ToastProvider` renders system-style toasts for API errors, session events, and PWA updates
+- Auto-dismiss after 5s, pause on hover, swipe-to-dismiss on mobile
+- Push notifications via Web Push API (VAPID) for session activity when browser is backgrounded
 
 ## SSH Connections
 

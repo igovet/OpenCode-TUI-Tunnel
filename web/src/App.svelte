@@ -14,9 +14,34 @@
   import SessionList from './pages/SessionList.svelte';
   import WorkspaceView from './pages/WorkspaceView.svelte';
   import SessionTabs from './components/SessionTabs.svelte';
+  import ToastProvider from './components/ui/ToastProvider.svelte';
+  import { getSettings, type Settings } from './lib/settings';
   
   // Navigation between home and workspace
   let currentView: 'home' | 'workspace' = $state('home');
+
+  // ── Settings → global DOM attributes ──
+  // Apply reduceMotion and uiFontSize as data-attributes on <html> so
+  // theme.css attribute-selector rules can react without per-component wiring.
+  // localStorage 'storage' events keep sibling tabs in sync; the effect also
+  // re-reads on mount.
+  function applySettingsAttributes(s: Settings) {
+    if (typeof document === 'undefined') return;
+    document.documentElement.dataset.reduceMotion = String(s.reduceMotion);
+    document.documentElement.dataset.uiFontSize = s.uiFontSize;
+  }
+
+  $effect(() => {
+    applySettingsAttributes(getSettings());
+  });
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('storage', (e) => {
+      if (e.key === 'opencode-tui-settings') {
+        applySettingsAttributes(getSettings());
+      }
+    });
+  }
 
   $effect(() => {
     appView.set(currentView);
@@ -37,6 +62,47 @@
     if ($workspace.tabs.length === 0) {
       currentView = 'home';
     }
+  });
+
+  // View-transition focus management (concept §5.1). When currentView changes,
+  // move focus to the new view's primary heading or first focusable element so
+  // screen-reader and keyboard users land on the new context, not the
+  // previously-focused control in the old view. A small tick via rAF lets the
+  // DOM settle before querying the focus target.
+  let handledInitialView = false;
+  $effect(() => {
+    // Reading currentView establishes the reactive dependency so this effect
+    // re-runs on every view transition. The value is consumed implicitly via
+    // the focus-target query below; `void` discards the binding while keeping
+    // the read for the dependency tracker.
+    void currentView;
+    // Skip the initial mount — only manage focus on actual view transitions.
+    if (!handledInitialView) {
+      handledInitialView = true;
+      return;
+    }
+    // Defer to next frame so the view's markup is mounted.
+    const id = requestAnimationFrame(() => {
+      const main = document.getElementById('main-content');
+      if (!main) return;
+      // Prefer an explicit heading marked focusable, then any heading, then
+      // the first interactive element.
+      const target =
+        main.querySelector<HTMLElement>('h1[data-view-focus], h2[data-view-focus]') ??
+        main.querySelector<HTMLElement>('h1, h2') ??
+        main.querySelector<HTMLElement>(
+          'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+        );
+      if (target) {
+        // Headings are not focusable by default; make this one programmatically
+        // focusable without adding it to the tab order (tabindex=-1).
+        if (target.tagName === 'H1' || target.tagName === 'H2') {
+          target.tabIndex = -1;
+        }
+        target.focus();
+      }
+    });
+    return () => cancelAnimationFrame(id);
   });
 
   let headerHeight = $state(40);
@@ -124,20 +190,20 @@
   });
 </script>
 
+<a href="#main-content" class="skip-link">Skip to content</a>
+
 <div class="app-shell">
   <header class="app-header" class:workspace-mode={currentView === 'workspace'} bind:clientHeight={headerHeight}>
     {#if $workspace.tabs.length > 0}
       <SessionTabs ongoHome={goHome} ongoWorkspace={goWorkspace} {currentView} />
     {/if}
-    
-    <div class="header-actions">
-      {#if currentView === 'workspace' && $workspace.activeTabId}
-        <button class="new-session-btn" onclick={goHome} title="New session" aria-label="New session">+</button>
-      {/if}
-    </div>
+
+    <!-- "+" new-session button moved into SessionTabs strip (concept §2.3).
+         header-actions retained empty for future toolbar content. -->
+    <div class="header-actions"></div>
   </header>
   
-  <main class="app-content" data-view={currentView}>
+  <main id="main-content" tabindex="-1" class="app-content" data-view={currentView}>
     {#if currentView === 'home' || $workspace.tabs.length === 0}
       <SessionList onopenSession={(e) => {
         workspace.openTab(e);
@@ -147,9 +213,44 @@
       <WorkspaceView {headerHeight} />
     {/if}
   </main>
+
+  <ToastProvider />
 </div>
 
 <style>
+  .skip-link {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+    z-index: var(--z-toast);
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    border: 1px solid var(--border-accent);
+    border-radius: var(--radius-md);
+    box-shadow: var(--shadow-lg);
+    font-family: var(--font-ui);
+    font-size: var(--font-size-sm);
+    text-decoration: none;
+  }
+
+  .skip-link:focus-visible {
+    position: fixed;
+    top: var(--space-2);
+    left: var(--space-2);
+    width: auto;
+    height: auto;
+    margin: 0;
+    overflow: visible;
+    clip: auto;
+    white-space: normal;
+  }
+
   .app-shell {
     display: flex;
     flex-direction: column;
@@ -186,35 +287,15 @@
     align-items: center;
     gap: var(--space-2);
     flex-shrink: 0;
+    padding: 0 var(--space-2);
+    border-left: 1px solid var(--border-subtle);
+    align-self: stretch;
   }
 
   .header-actions:empty {
     display: none;
   }
 
-  .new-session-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    margin: 4px;
-    padding: 0;
-    background: var(--bg-overlay);
-    border: none;
-    cursor: pointer;
-    color: var(--text-muted);
-    font-size: 1.2rem;
-    font-family: var(--font-mono);
-    transition: background 0.15s ease, color 0.15s ease;
-    flex-shrink: 0;
-  }
-
-  .new-session-btn:hover {
-    background: var(--bg-elevated);
-    color: var(--accent-green);
-  }
-  
   .app-content {
     flex: 1;
     min-height: 0;

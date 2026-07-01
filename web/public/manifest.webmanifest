@@ -6,7 +6,7 @@
   "display": "standalone",
   "display_override": ["standalone", "minimal-ui"],
   "background_color": "#0d0d0d",
-  "theme_color": "#00ff88",
+  "theme_color": "#05060a",
   "orientation": "any",
   "scope": "/",
   "icons": [

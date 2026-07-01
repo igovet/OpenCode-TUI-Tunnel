@@ -8,13 +8,22 @@
   } from '../lib/terminal';
   import { workspace, isTerminalTabEnded } from '../lib/workspace';
   import { activeTerminalWrite, activeTerminalRef } from '../lib/activeTerminal';
-  import { zoomState, setZoom, registerManager } from '../lib/zoomStore.svelte';
+  import { registerManager } from '../lib/zoomStore.svelte';
+  import Icon from './ui/Icon.svelte';
+  import StatusDot from './ui/StatusDot.svelte';
+  import Tooltip from './ui/Tooltip.svelte';
 
   let {
     sessionId,
     isActive,
     showBorder = false,
-  } = $props<{ sessionId: string; isActive: boolean; showBorder?: boolean }>();
+    showChrome = true,
+  } = $props<{
+    sessionId: string;
+    isActive: boolean;
+    showBorder?: boolean;
+    showChrome?: boolean;
+  }>();
 
   let container: HTMLElement;
   let manager = $state<TerminalManager | null>(null);
@@ -33,45 +42,30 @@
     connectionStatus === 'reconnecting' ? 'Reconnection...' : 'Connection...',
   );
   let isSshTab = $derived(tab?.backend === 'ssh');
-  let sshLabel = $derived(isSshTab ? '🌐 SSH' : '');
+  let paneTitle = $derived(
+    tab?.title || (tab?.cwd ? basename(tab.cwd) : '') || sessionId.slice(0, 8),
+  );
+  let paneCwd = $derived(tab?.cwd ?? '');
+  let attentionKind = $derived(
+    tab?.attention && tab.attention !== 'none' ? tab.attention : null,
+  );
+  // Screen-reader label for the xterm application region. xterm.js renders its
+  // output to a canvas and is not natively accessible, so an enclosing
+  // role="application" with a descriptive aria-label gives screen-reader users
+  // context about what the pane contains (concept §5.3).
+  let paneStatusText = $derived(tab?.status ?? 'unknown');
+  let terminalAriaLabel = $derived(
+    `Terminal session: ${paneCwd || paneTitle}, status ${paneStatusText}`,
+  );
 
   let resizeTimer: ReturnType<typeof setTimeout> | null = null;
   let ongoingResizeObserver: ResizeObserver | null = null;
-  let zoomMenuOpen = $state(false);
-
-  const ZOOM_PRESETS = [10, 11, 12, 13, 14, 15, 16, 18, 20, 22, 24];
 
   let lastObservedW = 0;
   let lastObservedH = 0;
 
-  $effect(() => {
-    if (!zoomMenuOpen) {
-      return;
-    }
-
-    const onDocumentClick = (event: MouseEvent) => {
-      if (event.target instanceof Element && event.target.closest('.zoom-toolbar')) {
-        return;
-      }
-
-      zoomMenuOpen = false;
-    };
-
-    document.addEventListener('click', onDocumentClick);
-    return () => {
-      document.removeEventListener('click', onDocumentClick);
-    };
-  });
-
-  function toggleZoomMenu(event: Event) {
-    event.stopPropagation();
-    zoomMenuOpen = !zoomMenuOpen;
-  }
-
-  function selectZoom(event: Event, value: number) {
-    event.stopPropagation();
-    setZoom(value);
-    zoomMenuOpen = false;
+  function basename(path: string): string {
+    return path.split('/').pop() || path;
   }
 
   function setupResizeObserver(el: HTMLElement) {
@@ -218,7 +212,7 @@
   });
 
   function handleClick(event: MouseEvent) {
-    if (event.target instanceof Element && event.target.closest('.zoom-toolbar')) {
+    if (event.target instanceof Element && event.target.closest('.pane-chrome')) {
       return;
     }
 
@@ -231,141 +225,169 @@
     if (!isTouch) {
       manager?.terminal.focus();
     }
-    zoomMenuOpen = false;
   }
 </script>
 
+<!-- The pane is a group landmark for screen readers: it owns a chrome header
+     and an xterm application region. The onclick activates the pane but the
+     element is not a true button, so role="group" with a descriptive label is
+     the correct semantic (concept §5.3). The svelte-ignore directives suppress
+     the interactive-element checks that apply because a group landmark hosts a
+     click-to-activate handler (pointer + touch) for pane focus management. -->
 <!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_interactive_supports_focus -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
-  class="terminal-pane {showBorder ? 'show-border' : ''} {isActive && showBorder ? 'active' : ''}"
+  class="terminal-pane"
   onclick={handleClick}
   ontouchstart={(e) => e.stopPropagation()}
   ontouchmove={(e) => e.stopPropagation()}
-  role="button"
+  role="group"
+  aria-label={`Terminal pane: ${paneTitle}`}
   style="touch-action: none"
 >
-  {#if isActive}
-    <div class="zoom-toolbar">
-      {#if isSshTab}
-        <span class="ssh-indicator" title="SSH remote session">{sshLabel}</span>
-      {/if}
-      <button class="zoom-trigger" onclick={toggleZoomMenu} aria-haspopup="menu" aria-expanded={zoomMenuOpen} aria-label="Terminal zoom presets">
-        {zoomState.value}px ▾
-      </button>
-      {#if zoomMenuOpen}
-        <div class="zoom-menu" role="menu" aria-label="Zoom level options">
-          {#each ZOOM_PRESETS as size}
-            <button
-              class="zoom-option"
-              class:selected={zoomState.value === size}
-              role="menuitemradio"
-              aria-checked={zoomState.value === size}
-              onclick={(e) => selectZoom(e, size)}
-            >
-              {size}px
-            </button>
-          {/each}
-        </div>
-      {/if}
+  {#if showChrome}
+    <div
+      class="pane-chrome"
+      class:active={isActive && showBorder}
+      aria-label={`Pane: ${paneTitle}`}
+    >
+      <div class="chrome-left">
+        {#if attentionKind}
+          {#if attentionKind === 'question'}
+            <Icon name="info" size={14} class="attention-icon" aria-label="Question requires attention" />
+          {:else}
+            <Icon name="key" size={14} class="attention-icon" aria-label="Permission requires attention" />
+          {/if}
+        {:else if tab}
+          <StatusDot status={tab.status} size="sm" />
+        {/if}
+        <span class="pane-title" title={paneCwd}>{paneTitle}</span>
+      </div>
+
+      <div class="chrome-right">
+        {#if isSshTab}
+          <Tooltip content="SSH remote session" position="bottom">
+            <span class="ssh-badge"><Icon name="globe" size={12} />SSH</span>
+          </Tooltip>
+        {/if}
+      </div>
     </div>
   {/if}
-  {#if !containerReady}
-    <div class="terminal-placeholder"></div>
-  {/if}
-  {#if showConnectionStatus}
-    <div class="connection-status" aria-live="polite">{connectionStatusText}</div>
-  {/if}
-  <div class="terminal-container" bind:this={container} style="opacity: {containerReady ? 1 : 0}"></div>
+
+  <div class="pane-body">
+    {#if !containerReady}
+      <div class="terminal-placeholder"></div>
+    {/if}
+    {#if showConnectionStatus}
+      <div class="connection-status" aria-live="polite">{connectionStatusText}</div>
+    {/if}
+    <div
+      class="terminal-container"
+      bind:this={container}
+      style="opacity: {containerReady ? 1 : 0}"
+      role="application"
+      aria-label={terminalAriaLabel}
+    ></div>
+  </div>
 </div>
 
 <style>
-
-  .zoom-toolbar {
-    position: absolute;
-    top: 0;
-    right: 16px;
-    z-index: 10;
-    display: flex;
-    align-items: center;
-    gap: 6px;
-  }
-
-  .ssh-indicator {
-    font-size: 11px;
-    padding: 2px 6px;
-    background: rgba(34, 211, 238, 0.1);
-    border: 1px solid var(--accent-cyan);
-    border-radius: 0;
-    color: var(--accent-cyan);
-    font-family: var(--font-mono);
-    white-space: nowrap;
-    pointer-events: none;
-    user-select: none;
-  }
-
-  .zoom-trigger {
-    font-size: 11px;
-    padding: 2px 6px;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-default);
-    border-radius: 0;
-    color: var(--text-secondary);
-    cursor: pointer;
-    font-family: var(--font-mono);
-    white-space: nowrap;
-  }
-
-  .zoom-menu {
-    position: absolute;
-    top: calc(100% + 2px);
-    right: 0;
-    background: var(--bg-elevated);
-    border: 1px solid var(--border-default);
-    border-radius: 0;
-    overflow: hidden;
-    z-index: 100;
-    min-width: 60px;
-  }
-
-  .zoom-option {
-    display: block;
-    width: 100%;
-    text-align: right;
-    padding: 3px 8px;
-    font-size: 11px;
-    font-family: var(--font-mono);
-    background: none;
-    border: none;
-    color: var(--text-secondary);
-    cursor: pointer;
-  }
-
-  .zoom-option:hover {
-    background: var(--bg-overlay);
-  }
-
-  .zoom-option.selected {
-    color: var(--accent-blue);
-    background: var(--bg-overlay);
-  }
-
   .terminal-pane {
     flex: 1;
     min-height: 0;
     min-width: 0;
     position: relative;
-    border: 1px solid var(--border-default);
-    border-top-width: 2px;
-    border-top-color: transparent;
+    display: flex;
+    flex-direction: column;
+    border: none;
     height: 100%;
     width: 100%;
     overflow: hidden;
+    outline: none;
     padding: 0;
     margin: 0;
     box-sizing: border-box;
-    opacity: 1;
-    transition: opacity 0.2s ease, border-top-color 0.2s ease;
+    transition: none;
+    background: var(--bg-terminal);
+  }
+
+  /* ── Pane chrome (slim header) ── */
+  .pane-chrome {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2, 8px);
+    height: 28px;
+    flex: 0 0 28px;
+    padding: 0 8px;
+    background: var(--bg-surface);
+    border-bottom: 1px solid var(--border-subtle);
+    font-family: var(--font-ui);
+    color: var(--text-secondary);
+    user-select: none;
+    z-index: 10;
+    position: relative;
+    transition: opacity var(--transition-base), background var(--transition-base), box-shadow var(--transition-base);
+  }
+
+  .chrome-left {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .pane-title {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 240px;
+  }
+
+  .chrome-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  :global(.attention-icon) {
+    color: var(--accent-yellow);
+    flex-shrink: 0;
+    animation: attention-pulse 1.15s ease-in-out infinite;
+  }
+
+  @keyframes attention-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.45; }
+  }
+
+  .ssh-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 10px;
+    font-family: var(--font-mono);
+    padding: 1px 6px;
+    background: color-mix(in srgb, var(--accent-cyan) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent-cyan) 50%, transparent);
+    border-radius: var(--radius-sm);
+    color: var(--accent-cyan);
+    white-space: nowrap;
+    pointer-events: none;
+    user-select: none;
+    letter-spacing: 0.04em;
+  }
+
+  /* ── Terminal body ── */
+  .pane-body {
+    position: relative;
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    background: var(--bg-terminal);
   }
 
   .terminal-placeholder {
@@ -377,11 +399,10 @@
     position: absolute;
     inset: 0;
     overflow: hidden;
-    background: #0d1117;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    max-width: 100%;
+    background: var(--bg-terminal);
+    display: block;
+    width: 100%;
+    height: 100%;
   }
 
   .connection-status {
@@ -397,29 +418,21 @@
     pointer-events: none;
     font-size: 12px;
     line-height: 1;
-    background: color-mix(in srgb, #0d1117 55%, transparent);
+    background: color-mix(in srgb, var(--bg-terminal) 55%, transparent);
     color: var(--text-secondary);
     font-family: var(--font-mono);
   }
 
+  /* ── xterm overrides ── */
   :global(.terminal-pane .xterm-screen canvas) {
     image-rendering: pixelated;
     touch-action: none;
     transform: translateZ(0) !important;
   }
 
-  .terminal-pane.show-border:not(.active) {
-    opacity: 0.5;
-  }
-
-  .terminal-pane.show-border.active {
-    opacity: 1;
-    border-top-color: var(--accent-blue);
-  }
-
   :global(.terminal-pane .xterm-viewport) {
     width: 100% !important;
-    background-color: #0d1117 !important;
+    background-color: var(--bg-terminal) !important;
     overflow-y: auto !important;
     overflow-x: hidden !important;
     scrollbar-width: none !important; /* Firefox */
@@ -441,31 +454,52 @@
   }
 
   :global(.terminal-pane .xterm) {
+    width: 100%;
+    height: 100%;
     font-variant-ligatures: none !important;
     font-feature-settings: "liga" 0, "calt" 0 !important;
+    padding: 0;
+    margin: 0;
+  }
+
+  /* ── xterm 6 internal layout: stretch to fill the pane ──
+     xterm sizes `.xterm-scrollable-element` / `.xterm-screen` to an integer
+     number of character rows×cols, leaving a residual empty strip on the
+     bottom (row-quantization remainder) and on the right (col-quantization
+     remainder). The render canvas only paints the quantized region, so the
+     leftover strip shows the container background. Because xterm's theme
+      background (#080808) equals `--bg-terminal`, stretching these internal
+     containers to `100%` makes the residual strip blend seamlessly — the
+     visible "gap" disappears while xterm keeps rendering text to the
+     quantized cell grid. `!important` overrides xterm's runtime inline
+     `width`/`height` on `.xterm-screen`. The render canvases themselves are
+     NOT stretched (their CSS width stays at the cell-grid width set inline
+     by xterm) to keep glyphs crisp — the residual right strip is filled by
+     the opaque `.xterm-screen` background which is the same terminal bg. */
+  :global(.terminal-pane .xterm-scrollable-element) {
+    width: 100% !important;
+    height: 100% !important;
   }
 
   :global(.terminal-pane .xterm-screen) {
-    width: 100%;
+    width: 100% !important;
+    height: 100% !important;
+    background-color: var(--bg-terminal) !important;
     display: block;
     overflow: hidden !important;
   }
 
-  @media (max-width: 768px) {
-    button:hover,
-    button:focus,
-    button:focus-visible,
-    .zoom-trigger:hover,
-    .zoom-trigger:focus,
-    .zoom-trigger:focus-visible,
-    .zoom-option:hover,
-    .zoom-option:focus,
-    .zoom-option:focus-visible {
-      outline: none;
-      background: inherit;
-      color: inherit;
-      border-color: inherit;
-      box-shadow: none;
-    }
+  /* ── Active pane chrome accent (multi-pane mode) ──
+     In multi-pane mode (showBorder=true), the active pane's chrome header
+     gets a subtle blue tint, an accent bottom border, and the title in
+     accent-blue so the user can visually identify the focused terminal. */
+  .pane-chrome.active {
+    background: color-mix(in srgb, var(--accent-blue) 10%, var(--bg-surface));
+    border-bottom: 2px solid color-mix(in srgb, var(--accent-blue) 55%, transparent);
   }
+
+  .pane-chrome.active .pane-title {
+    color: var(--accent-blue);
+  }
+
 </style>

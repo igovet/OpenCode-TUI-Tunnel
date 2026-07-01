@@ -515,14 +515,21 @@
           >↵ Enter</button>
         {/if}
       </div>
+      <!-- Subtle scroll affordance: a chevron appears at the right edge
+           when more keys are scrollable to the right, signalling that the
+           row can be swiped. Fades out once scrolled to the end. -->
+      {#if scrolledRight}
+        <span class="scroll-hint" aria-hidden="true">›</span>
+      {/if}
     </div>
 
     {#if arrowPadOpen}
       <div
         data-arrow-overlay="true"
-        style="position: fixed; z-index: 10001; left: {arrowOverlayLeft}px; bottom: {bottomOffset + 48}px; display: flex; flex-direction: column; gap: 4px; padding: 6px; background: #1a1a1a; border: 1px solid #333; box-shadow: 0 8px 20px rgb(0 0 0 / 45%);"
+        class="arrow-overlay"
+        style="left: {arrowOverlayLeft}px; bottom: {bottomOffset + 54}px;"
       >
-        <div style="display: flex; justify-content: center; gap: 4px;">
+        <div class="arrow-row">
           <button
             class="key arrow"
             tabindex="-1"
@@ -530,25 +537,25 @@
             onclick={() => handleArrowInput('\x1b[A')}
           >↑</button>
         </div>
-        <div style="display: flex; justify-content: center; gap: 4px;">
+        <div class="arrow-row">
           <button
             class="key arrow"
             tabindex="-1"
             onmousedown={(e) => e.preventDefault()}
             onclick={() => handleArrowInput('\x1b[D')}
-          ><span style="display: inline-block; transform: rotate(-90deg);">↑</span></button>
+          ><span class="rotate-left">↑</span></button>
           <button
             class="key arrow"
             tabindex="-1"
             onmousedown={(e) => e.preventDefault()}
             onclick={() => handleArrowInput('\x1b[B')}
-          ><span style="display: inline-block; transform: rotate(180deg);">↑</span></button>
+          ><span class="rotate-down">↑</span></button>
           <button
             class="key arrow"
             tabindex="-1"
             onmousedown={(e) => e.preventDefault()}
             onclick={() => handleArrowInput('\x1b[C')}
-          ><span style="display: inline-block; transform: rotate(90deg);">↑</span></button>
+          ><span class="rotate-right">↑</span></button>
         </div>
       </div>
     {/if}
@@ -561,28 +568,35 @@
     bottom: 0;
     left: 0;
     right: 0;
-    z-index: 9999;
-    height: 44px;
+    z-index: var(--z-mobile-chrome, 150);
+    height: var(--mobile-keybar-height);
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 0 6px;
-    background: #1a1a1a;
-    border-top: 1px solid #333;
+    gap: var(--space-2);
+    padding: 0 var(--space-2);
+    background: color-mix(in srgb, var(--bg-elevated) 48%, transparent);
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    border-top: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    box-shadow:
+      var(--shadow-inset),
+      0 -6px 24px rgba(0, 0, 0, 0.36);
+    transition: bottom var(--transition-fast);
   }
 
   .fixed-section {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-1);
     flex-shrink: 0;
   }
 
   .divider {
     width: 1px;
-    height: 32px;
-    background: #444;
-    margin: 0 4px;
+    height: 28px;
+    background: var(--border-muted);
+    margin: 0 var(--space-1);
     flex-shrink: 0;
   }
 
@@ -599,21 +613,21 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    width: 20px;
+    width: 28px;
     pointer-events: none;
-    z-index: 1;
+    z-index: 2;
     opacity: 0;
-    transition: opacity 0.2s;
+    transition: opacity var(--transition-moderate);
   }
 
   .scroll-wrapper::before {
     left: 0;
-    background: linear-gradient(to right, #1a1a1a, transparent);
+    background: linear-gradient(to right, var(--bg-surface), transparent);
   }
 
   .scroll-wrapper::after {
     right: 0;
-    background: linear-gradient(to left, #1a1a1a, transparent);
+    background: linear-gradient(to left, var(--bg-surface), transparent);
   }
 
   .scroll-wrapper.scrolled-left::before {
@@ -624,25 +638,54 @@
     opacity: 1;
   }
 
+  /* Subtle scroll affordance chevron at the right edge. Appears only while
+     there is more content to the right (scrolledRight=true) and fades/hides
+     once the user reaches the end. Pulsing animation draws the eye gently. */
+  .scroll-hint {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 3;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    font-size: 16px;
+    line-height: 1;
+    color: var(--text-muted);
+    pointer-events: none;
+    opacity: 0.7;
+    animation: keybar-scroll-hint 1.8s ease-in-out infinite;
+  }
+
+  @keyframes keybar-scroll-hint {
+    0%, 100% { opacity: 0.5; transform: translateY(-50%) translateX(0); }
+    50% { opacity: 0.9; transform: translateY(-50%) translateX(2px); }
+  }
+
   .scroll-section {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: var(--space-1-5);
     flex: 1;
     overflow-x: auto;
     overflow-y: hidden;
     scrollbar-width: none;
+    padding: 0 var(--space-1);
   }
   .scroll-section::-webkit-scrollbar { display: none; }
 
   .key {
-    background: #2a2a2a;
-    border: 1px solid #444;
-    border-radius: 0;
-    color: #ccc;
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    padding: 4px 8px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-md);
+    color: var(--text-secondary);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    padding: 0 var(--space-2-5, 0.625rem);
     white-space: nowrap;
     flex-shrink: 0;
     cursor: pointer;
@@ -650,73 +693,147 @@
     -webkit-user-select: none;
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
-    height: 32px;
+    min-height: 32px;
     display: flex;
     align-items: center;
     justify-content: center;
+    transition:
+      background var(--transition-fast),
+      border-color var(--transition-fast),
+      color var(--transition-fast),
+      transform var(--transition-fast);
   }
+  .key:active {
+    background: var(--bg-overlay);
+    border-color: var(--border-accent);
+    color: var(--text-primary);
+    transform: scale(0.94);
+  }
+
+  /* Special keys: Ctrl+, arrows, Tab, Esc, Home, End, Paste */
+  .key:not(.enter):not(.key-keyboard):not(.nl-btn):not(.ctrl-active):not(.kb-active):not(.arrow) {
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+  }
+  .key:not(.enter):not(.key-keyboard):not(.nl-btn):not(.ctrl-active):not(.kb-active):not(.arrow):active {
+    background: var(--bg-overlay);
+    border-color: var(--border-accent);
+    color: var(--text-primary);
+  }
+
   .key.arrow {
-    width: 32px;
-    min-width: 32px;
+    width: 38px;
+    min-width: 38px;
+    min-height: 38px;
     padding: 0;
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    font-size: var(--font-size-base);
   }
+  .key.arrow:active {
+    background: var(--bg-overlay);
+    border-color: var(--border-accent);
+    color: var(--text-primary);
+  }
+
   .key.enter {
-    background: #1a3a1a;
-    border-color: #3a7a3a;
-    color: #7fc77f;
-    min-width: 60px;
+    background: color-mix(in srgb, var(--accent-green) 10%, var(--bg-surface));
+    border-color: color-mix(in srgb, var(--accent-green) 32%, var(--border-subtle));
+    color: var(--accent-green);
+    min-width: 56px;
+    min-height: 32px;
+    font-weight: var(--font-weight-semibold);
   }
-  .key.danger {
-    background: #3a1a1a;
-    border-color: #7a3a3a;
-    color: #c77f7f;
+  .key.enter:active {
+    background: color-mix(in srgb, var(--accent-green) 20%, var(--bg-overlay));
+    border-color: var(--accent-green);
   }
+
   .key.ctrl-active {
-    background: #4a2200;
-    border-color: #aa6600;
-    color: #ffaa44;
+    background: color-mix(in srgb, var(--accent-yellow) 14%, var(--bg-overlay));
+    border-color: color-mix(in srgb, var(--accent-yellow) 45%, var(--border-accent));
+    color: var(--accent-yellow);
   }
+  .key.ctrl-active:active {
+    background: color-mix(in srgb, var(--accent-yellow) 24%, var(--bg-overlay));
+    border-color: var(--accent-yellow);
+  }
+
   .key.key-keyboard {
-    background: #0d2a3a;
-    border-color: #1a6080;
-    color: #4db8e8;
-    padding: 4px 14px;
-    font-size: 20px;
-    border-width: 1px;
-    min-width: 48px;
+    background: color-mix(in srgb, var(--accent-cyan) 10%, var(--bg-surface));
+    border-color: color-mix(in srgb, var(--accent-cyan) 30%, var(--border-subtle));
+    color: var(--accent-cyan);
+    padding: 0 var(--space-2-5, 0.625rem);
+    font-size: 18px;
+    min-width: 42px;
+    min-height: 32px;
     text-align: center;
-    height: 32px;
     display: flex;
     align-items: center;
     justify-content: center;
   }
+  .key.key-keyboard:active {
+    background: color-mix(in srgb, var(--accent-cyan) 18%, var(--bg-overlay));
+    border-color: var(--accent-cyan);
+  }
+
   .key.nl-btn {
-    background: #1a3a1a;
-    border-color: #3a7a3a;
-    color: #7fc77f;
-    padding: 4px 14px;
-    font-size: 20px;
-    border-width: 1px;
-    min-width: 48px;
+    background: color-mix(in srgb, var(--accent-green) 10%, var(--bg-surface));
+    border-color: color-mix(in srgb, var(--accent-green) 32%, var(--border-subtle));
+    color: var(--accent-green);
+    padding: 0 var(--space-2-5, 0.625rem);
+    font-size: 18px;
+    min-width: 42px;
+    min-height: 32px;
     text-align: center;
-    height: 32px;
     display: flex;
     align-items: center;
     justify-content: center;
   }
+  .key.nl-btn:active {
+    background: color-mix(in srgb, var(--accent-green) 20%, var(--bg-overlay));
+    border-color: var(--accent-green);
+  }
+
   .key.kb-active {
-    background: #003a4a;
-    border-color: #0099bb;
-    color: #44ddff;
-    padding: 4px 14px;
-    font-size: 20px;
-    min-width: 48px;
+    background: color-mix(in srgb, var(--accent-blue) 14%, var(--bg-overlay));
+    border-color: color-mix(in srgb, var(--accent-blue) 45%, var(--border-accent));
+    color: var(--accent-blue);
+    padding: 0 var(--space-2-5, 0.625rem);
+    font-size: 18px;
+    min-width: 42px;
+    min-height: 32px;
     text-align: center;
-    height: 32px;
     display: flex;
     align-items: center;
     justify-content: center;
   }
+  .key.kb-active:active {
+    background: color-mix(in srgb, var(--accent-blue) 24%, var(--bg-overlay));
+    border-color: var(--accent-blue);
+  }
+
+  .arrow-overlay {
+    position: fixed;
+    z-index: var(--z-tooltip, 500);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-1-5);
+    background: color-mix(in srgb, var(--bg-elevated) 48%, transparent);
+    backdrop-filter: blur(16px) saturate(140%);
+    -webkit-backdrop-filter: blur(16px) saturate(140%);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg), var(--shadow-inset);
+  }
+
+  .arrow-row {
+    display: flex;
+    justify-content: center;
+    gap: var(--space-1);
+  }
+
   .rotate-left {
     display: inline-block;
     transform: rotate(-90deg);
@@ -724,5 +841,40 @@
   .rotate-right {
     display: inline-block;
     transform: rotate(90deg);
+  }
+  .rotate-down {
+    display: inline-block;
+    transform: rotate(180deg);
+  }
+
+  /* ── Reduced transparency: solid fallback for glass surfaces ── */
+  @media (prefers-reduced-transparency: reduce) {
+    .keybar {
+      background: var(--bg-elevated);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+    .arrow-overlay {
+      background: var(--bg-elevated);
+      backdrop-filter: none;
+      -webkit-backdrop-filter: none;
+    }
+  }
+
+  /* ── Reduced motion: instant transitions ── */
+  @media (prefers-reduced-motion: reduce) {
+    .key {
+      transition: none;
+    }
+    .scroll-wrapper::before,
+    .scroll-wrapper::after {
+      transition: none;
+    }
+    .scroll-hint {
+      animation: none;
+    }
+    .key:active {
+      transform: none;
+    }
   }
 </style>
