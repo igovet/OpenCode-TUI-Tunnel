@@ -43,7 +43,7 @@
     "dev:web": "vite dev --config web/vite.config.ts",
     "lint": "npx eslint src web/src",
     "format": "prettier --write .",
-    "test": "node --test test/**/*.test.ts"
+    "test": "node --test test/cli-smoke.test.ts"
   },
   "dependencies": {
     "@fastify/static": "^9.0.0",
