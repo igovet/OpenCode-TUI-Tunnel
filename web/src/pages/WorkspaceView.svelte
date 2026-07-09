@@ -50,10 +50,8 @@
     const handler = () => {
       vpHeight = window.visualViewport!.height;
       requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          const terminal = get(activeTerminalRef);
-          if (terminal) terminal.scheduleFit(0);
-        });
+        const terminal = get(activeTerminalRef);
+        if (terminal) terminal.scheduleFit(50);
       });
     };
     window.visualViewport.addEventListener('resize', handler);

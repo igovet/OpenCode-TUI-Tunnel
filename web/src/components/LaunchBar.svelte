@@ -55,6 +55,7 @@
 </script>
 
 <Card variant="glass" padding="sm">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="launch-bar" onkeydown={handleKeyDown}>
     <div class="path-wrapper">
       <PathAutocomplete

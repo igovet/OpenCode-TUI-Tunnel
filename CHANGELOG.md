@@ -5,6 +5,42 @@ All notable changes to this project are documented here.
 ---
 
 <details open>
+<summary><strong>v0.3.1</strong> — 2026-07-09</summary>
+
+### 🎯 Features
+
+- **Dynamic xterm.js import** — xterm.js core is now dynamically imported, reducing the main JavaScript bundle from 532 KB to 164 KB (69% reduction). The xterm core (~368 KB) is loaded only when a terminal pane is first mounted.
+- **Baseline test infrastructure** — Added CLI smoke test (`--help`, `--version`, `doctor`) using Node.js built-in `node:test`, and Playwright e2e configuration.
+- **Reduced default scrollback** — Default scrollback buffer reduced from 3000 to 1000 lines for better memory efficiency.
+
+### 🔧 Bug Fixes
+
+- **Removed Ctrl+→/Ctrl+← shortcuts** — These keyboard shortcuts interfered with built-in terminal cursor word-jump functions.
+- **Fixed ESLint crash** — Resolved `@typescript-eslint` incompatibility with TypeScript 7 by downgrading to TypeScript 5.9.3.
+- **Fixed `pruneOldSessions` column name** — Corrected column reference from `created_at` to `started_at`.
+- **Added pruning interval cleanup** — `stopServer()` now properly cleans up the session pruning interval.
+
+### 🎨 UI/UX
+
+- **All Svelte a11y warnings resolved** — 10 warnings across 7 components eliminated.
+- **All lightningcss `:global` warnings eliminated** — xterm CSS extracted to a separate file to remove `:global` warnings.
+- **Escape key dialog dismissal** — Added keyboard handler to dialog overlay for Escape key dismissal.
+- **Explicit Svelte config** — Created `web/svelte.config.js` to eliminate "no Svelte config found" message.
+
+### 📡 Infrastructure
+
+- **Bumped minimum Node.js** — Minimum Node.js version updated from `>=20.0.0` to `>=22.12.0`.
+- **Dependency updates** — Updated all dependencies to latest versions (32 packages: commander@15, concurrently@10, sharp@0.35, @types/node@26, typescript@5.9, and 14 minor bumps).
+- **Removed unused `sharp` dependency** — `sharp` was never imported by any source file.
+- **Vite chunk size warning** — Added `chunkSizeWarningLimit: 600` to Vite config to accommodate xterm bundle size.
+- **Session and event pruning** — Exited sessions older than 24h are automatically deleted.
+- **WebSocket backpressure buffer** — Added 64KB ring buffer to prevent data loss during WebSocket backpressure.
+- **SSH rate-limiter cleanup** — Added Map cleanup to prevent unbounded memory growth.
+- **Sessions Map cleanup fix** — Fixed sessions Map cleanup on session termination.
+
+</details>
+
+<details>
 <summary><strong>v0.3.0</strong> — 2026-07-01</summary>
 
 ### 🎯 Features

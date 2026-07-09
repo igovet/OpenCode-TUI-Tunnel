@@ -10,7 +10,8 @@
     ],
     "types": [
       "vite/client"
-    ]
+    ],
+    "rootDir": "."
   },
   "include": [
     "src/**/*.ts",

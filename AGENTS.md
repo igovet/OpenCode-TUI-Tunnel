@@ -152,6 +152,6 @@ Visual language defined in `web/src/styles/theme.css` using CSS custom propertie
 
 ## Runtime Requirements
 
-- Node.js: `>=20.0.0`
+- Node.js: `>=22.12.0`
 - Required tools: `tmux`, `opencode`
 - Native build support needed for modules like `better-sqlite3` and `node-pty`

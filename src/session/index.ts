@@ -395,6 +395,8 @@ export class SessionSupervisor {
       reconnectable: 0,
     });
 
+    this.sessions.delete(id);
+
     logEvent(this.db, id, 'session_terminated', {
       tmuxName: current.tmuxName,
       endedAt: endedAt.toISOString(),

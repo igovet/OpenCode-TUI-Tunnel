@@ -6,7 +6,7 @@ export default defineConfig({
     'server/index': 'src/server/index.ts',
   },
   format: ['esm'],
-  target: 'node20',
+  target: 'node22',
   outDir: 'dist',
   // Keep dist/web assets intact when server is rebuilt after web build.
   clean: false,

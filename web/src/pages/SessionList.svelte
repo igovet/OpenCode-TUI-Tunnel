@@ -834,16 +834,6 @@
     width: 100%;
   }
 
-  .sessions-section.empty-state-active {
-    /* Keep the empty state in its normal position (compact, at the top of
-       the sessions section). Center it horizontally so the empty-state
-       text/card is not left-aligned. */
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    text-align: center;
-  }
-
   /* The EmptyState component renders a Card (width:100%) with a
      .empty-state-inner (max-width:320px). When the sessions section is
      wider than the card's inner content, the inner block sits left-aligned

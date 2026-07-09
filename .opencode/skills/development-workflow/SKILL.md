@@ -80,7 +80,7 @@ opencode-tui-tunnel doctor
 
 `doctor` checks include:
 
-- Node major version (>=20)
+- Node major version (>=22.12.0)
 - `tmux` availability
 - `opencode` command in `PATH`
 - config directory writability

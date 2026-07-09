@@ -414,6 +414,7 @@
 </script>
 
 {#if isMobile}
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="keybar" style="bottom: {bottomOffset}px" onpointerdown={(e) => e.preventDefault()}>
     <div class="fixed-section">
       <button

@@ -210,18 +210,10 @@
   let activeSection: SectionId = $state('notifications');
 
   // ── Keyboard shortcuts data ──
-
   const shortcuts = [
-    { keys: ['Ctrl', '→'], desc: 'Next pane' },
-    { keys: ['Ctrl', '←'], desc: 'Previous pane' },
-    { keys: ['Ctrl', '↑'], desc: 'Pane above' },
-    { keys: ['Ctrl', '↓'], desc: 'Pane below' },
     { keys: ['Alt', '1..9'], desc: 'Go to page' },
     { keys: ['Alt', '←'], desc: 'Previous page' },
     { keys: ['Alt', '→'], desc: 'Next page' },
-    { keys: ['Esc'], desc: 'Close modal / pane focus' },
-    { keys: ['Tab'], desc: 'Next focusable element' },
-    { keys: ['Shift', 'Tab'], desc: 'Previous focusable element' },
   ];
 </script>
 
@@ -488,22 +480,15 @@
         {:else if activeSection === 'keyboard'}
           <div class="section">
             <h3 class="section-title">Keyboard Shortcuts</h3>
-            <p class="section-desc">
-              Reference for available keyboard shortcuts. Custom keybindings are
-              not yet configurable.
-            </p>
 
-            <div class="shortcuts-list">
+            <div class="shortcuts-list" role="list">
               {#each shortcuts as shortcut}
-                <div class="shortcut-row">
-                  <div class="shortcut-keys">
+                <div class="shortcut-row" role="listitem">
+                  <span class="shortcut-keys">
                     {#each shortcut.keys as key, i}
-                      <kbd class="shortcut-key">{key}</kbd>
-                      {#if i < shortcut.keys.length - 1}
-                        <span class="shortcut-plus">+</span>
-                      {/if}
+                      {#if i > 0}<span class="shortcut-plus">+</span>{/if}<kbd class="shortcut-key">{key}</kbd>
                     {/each}
-                  </div>
+                  </span>
                   <span class="shortcut-desc">{shortcut.desc}</span>
                 </div>
               {/each}
@@ -726,10 +711,8 @@
   .shortcut-row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3, 0.75rem);
+    gap: var(--space-4, 1rem);
     padding: var(--space-2, 0.5rem) 0;
-    border-bottom: 1px solid var(--border-muted, rgba(255, 255, 255, 0.04));
   }
 
   .shortcut-row:last-child {
@@ -739,39 +722,38 @@
   .shortcut-keys {
     display: flex;
     align-items: center;
-    gap: var(--space-1, 0.25rem);
+    gap: 4px;
     flex-shrink: 0;
+    min-width: 120px;
   }
 
   .shortcut-key {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 24px;
-    padding: 2px 6px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-sm, 4px);
+    color: var(--text-secondary);
     font-family: var(--font-mono);
     font-size: var(--font-size-xs, 0.75rem);
-    font-weight: var(--font-weight-medium, 500);
-    color: var(--text-primary);
-    background: var(--bg-overlay);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius-sm, 4px);
-    line-height: var(--line-height-tight, 1.25);
+    font-weight: var(--font-weight-semibold, 600);
+    padding: 2px 6px;
+    min-width: 24px;
+    text-align: center;
   }
 
   .shortcut-plus {
     color: var(--text-muted);
     font-family: var(--font-mono);
     font-size: var(--font-size-xs, 0.75rem);
+    font-weight: var(--font-weight-medium, 500);
   }
 
   .shortcut-desc {
     font-family: var(--font-ui);
     font-size: var(--font-size-sm, 0.8125rem);
     color: var(--text-secondary);
-    text-align: right;
-    flex: 1;
-    min-width: 0;
   }
 
   /* ── Responsive: stack nav on top on narrow screens ── */

@@ -1,11 +1,9 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { get } from 'svelte/store';
-  import {
-    TerminalManager,
-    refreshAllManagers,
-    type TerminalConnectionStatus,
-  } from '../lib/terminal';
+  import { refreshAllManagers } from '../lib/zoomStore.svelte';
+  import { type TerminalConnectionStatus } from '../lib/terminal';
+  import type { TerminalManager } from '../lib/terminal';
   import { workspace, isTerminalTabEnded } from '../lib/workspace';
   import { activeTerminalWrite, activeTerminalRef } from '../lib/activeTerminal';
   import { registerManager } from '../lib/zoomStore.svelte';
@@ -109,70 +107,81 @@
     }
 
     let disposed = false;
-    const localManager = new TerminalManager(container, 80, 24);
-    manager = localManager;
+    let localManager: TerminalManager | null = null;
+    let unregisterManager: (() => void) | null = null;
+    let initialRo: ResizeObserver | null = null;
 
-    const unregisterManager = registerManager(localManager);
-    localManager.onExit((code) => {
-      workspace.updateTabStatus(sessionId, code === 0 ? 'exited' : 'failed');
-    });
+    (async () => {
+      const { TerminalManager: TM } = await import('../lib/terminal');
+      if (disposed) return;
 
-    let opened = false;
-    const initialRo = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      const { width, height } = entry.contentRect;
-      if (!opened && width > 0 && height > 0) {
-        opened = true;
-        (async () => {
-          containerReady = true;
-          await tick();
+      localManager = new TM(container, 80, 24);
+      manager = localManager;
 
-          if (disposed) {
-            return;
-          }
+      unregisterManager = registerManager(localManager);
+      localManager.onExit((code) => {
+        workspace.updateTabStatus(sessionId, code === 0 ? 'exited' : 'failed');
+      });
 
-          await localManager.open();
+      let opened = false;
+      initialRo = new ResizeObserver((entries) => {
+        const entry = entries[0];
+        const { width, height } = entry.contentRect;
+        if (!opened && width > 0 && height > 0) {
+          opened = true;
+          (async () => {
+            containerReady = true;
+            await tick();
 
-          if (disposed) {
-            return;
-          }
-
-          try {
-            await new Promise((resolve) => setTimeout(resolve, 100));
-            localManager.fitAddon.fit();
-          } catch {
-            // intentional
-          }
-
-          initialRo.disconnect();
-          setupResizeObserver(container);
-
-          const activeTab = get(workspace).tabs.find((candidate) => candidate.sessionId === sessionId);
-          const isEnded = activeTab ? isTerminalTabEnded(activeTab.status) : false;
-
-          if (!isEnded) {
-            localManager.connect(sessionId);
-          } else {
-            localManager.terminal.writeln('\r\n\x1b[33mSession ended\x1b[0m');
-          }
-
-          if (isActive) {
-            if (!window.matchMedia('(pointer: coarse)').matches) {
-              localManager.terminal.focus();
+            if (disposed) {
+              return;
             }
-            activeTerminalWrite.set((data) => localManager.onData(data));
-            activeTerminalRef.set(localManager);
-            refreshAllManagers();
-          }
-        })();
-      }
-    });
 
-    initialRo.observe(container);
+            await localManager!.open();
+
+            if (disposed) {
+              return;
+            }
+
+            try {
+              await new Promise((resolve) => setTimeout(resolve, 100));
+              localManager!.fitAddon.fit();
+            } catch {
+              // intentional
+            }
+
+            initialRo!.disconnect();
+            setupResizeObserver(container);
+
+            const activeTab = get(workspace).tabs.find((candidate) => candidate.sessionId === sessionId);
+            const isEnded = activeTab ? isTerminalTabEnded(activeTab.status) : false;
+
+            if (!isEnded) {
+              localManager!.connect(sessionId);
+            } else {
+              localManager!.terminal.writeln('\r\n\x1b[33mSession ended\x1b[0m');
+            }
+
+            if (isActive) {
+              if (!window.matchMedia('(pointer: coarse)').matches) {
+                localManager!.terminal.focus();
+              }
+              activeTerminalWrite.set((data) => localManager!.onData(data));
+              activeTerminalRef.set(localManager!);
+              refreshAllManagers();
+            }
+          })();
+        }
+      });
+
+      initialRo.observe(container);
+    })();
 
     return () => {
       disposed = true;
-      initialRo.disconnect();
+      if (initialRo) {
+        initialRo.disconnect();
+      }
 
       if (ongoingResizeObserver) {
         ongoingResizeObserver.disconnect();
@@ -184,16 +193,20 @@
         resizeTimer = null;
       }
 
-      unregisterManager();
-
-      if (get(activeTerminalRef) === localManager) {
-        activeTerminalWrite.set(null);
-        activeTerminalRef.set(null);
+      if (unregisterManager) {
+        unregisterManager();
       }
 
-      localManager.dispose();
-      if (manager === localManager) {
-        manager = null;
+      if (localManager) {
+        if (get(activeTerminalRef) === localManager) {
+          activeTerminalWrite.set(null);
+          activeTerminalRef.set(null);
+        }
+
+        localManager.dispose();
+        if (manager === localManager) {
+          manager = null;
+        }
       }
       containerReady = false;
       connectionStatus = 'disconnected';
@@ -421,72 +434,6 @@
     background: color-mix(in srgb, var(--bg-terminal) 55%, transparent);
     color: var(--text-secondary);
     font-family: var(--font-mono);
-  }
-
-  /* ── xterm overrides ── */
-  :global(.terminal-pane .xterm-screen canvas) {
-    image-rendering: pixelated;
-    touch-action: none;
-    transform: translateZ(0) !important;
-  }
-
-  :global(.terminal-pane .xterm-viewport) {
-    width: 100% !important;
-    background-color: var(--bg-terminal) !important;
-    overflow-y: auto !important;
-    overflow-x: hidden !important;
-    scrollbar-width: none !important; /* Firefox */
-    overscroll-behavior: contain;
-    touch-action: none;
-    -webkit-overflow-scrolling: touch;
-  }
-
-  :global(.terminal-pane .xterm-viewport::-webkit-scrollbar) {
-    display: none !important;
-    width: 0 !important;
-  }
-
-  :global(.xterm-rows),
-  :global(.xterm-row) {
-    line-height: normal !important;
-    padding: 0 !important;
-    margin: 0 !important;
-  }
-
-  :global(.terminal-pane .xterm) {
-    width: 100%;
-    height: 100%;
-    font-variant-ligatures: none !important;
-    font-feature-settings: "liga" 0, "calt" 0 !important;
-    padding: 0;
-    margin: 0;
-  }
-
-  /* ── xterm 6 internal layout: stretch to fill the pane ──
-     xterm sizes `.xterm-scrollable-element` / `.xterm-screen` to an integer
-     number of character rows×cols, leaving a residual empty strip on the
-     bottom (row-quantization remainder) and on the right (col-quantization
-     remainder). The render canvas only paints the quantized region, so the
-     leftover strip shows the container background. Because xterm's theme
-      background (#080808) equals `--bg-terminal`, stretching these internal
-     containers to `100%` makes the residual strip blend seamlessly — the
-     visible "gap" disappears while xterm keeps rendering text to the
-     quantized cell grid. `!important` overrides xterm's runtime inline
-     `width`/`height` on `.xterm-screen`. The render canvases themselves are
-     NOT stretched (their CSS width stays at the cell-grid width set inline
-     by xterm) to keep glyphs crisp — the residual right strip is filled by
-     the opaque `.xterm-screen` background which is the same terminal bg. */
-  :global(.terminal-pane .xterm-scrollable-element) {
-    width: 100% !important;
-    height: 100% !important;
-  }
-
-  :global(.terminal-pane .xterm-screen) {
-    width: 100% !important;
-    height: 100% !important;
-    background-color: var(--bg-terminal) !important;
-    display: block;
-    overflow: hidden !important;
   }
 
   /* ── Active pane chrome accent (multi-pane mode) ──

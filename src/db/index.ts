@@ -490,3 +490,9 @@ export function countActiveSessionsForSshConnection(db: Database, sshConnectionI
 
   return row?.count ?? 0;
 }
+
+export function pruneOldSessions(db: Database, retainHours: number): void {
+  const cutoff = new Date(Date.now() - retainHours * 60 * 60 * 1000).toISOString();
+  db.prepare(`DELETE FROM sessions WHERE status = 'exited' AND started_at < ?`).run(cutoff);
+  db.prepare(`DELETE FROM session_events WHERE created_at < ?`).run(cutoff);
+}
