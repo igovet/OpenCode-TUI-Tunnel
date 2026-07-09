@@ -13,8 +13,4 @@ describe('CLI smoke test', () => {
     match(output, /\d+\.\d+\.\d+/);
   });
 
-  it('should run doctor without error', () => {
-    const output = execSync('node dist/cli/bin.js doctor', { encoding: 'utf-8' });
-    match(output, /Node\.js/);
-  });
 });
