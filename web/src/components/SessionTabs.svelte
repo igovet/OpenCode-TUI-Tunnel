@@ -27,7 +27,7 @@
   import { requestedWorkspacePage } from '../lib/workspacePage';
   import { workspaceMaxPanes } from '../lib/workspaceDisplay';
   import { deleteSession } from '../lib/api';
-  import { refreshAllManagers } from '../lib/terminal';
+  import { refreshAllManagers } from '../lib/zoomStore.svelte';
   import Icon from './ui/Icon.svelte';
   import StatusDot from './ui/StatusDot.svelte';
   import Button from './ui/Button.svelte';

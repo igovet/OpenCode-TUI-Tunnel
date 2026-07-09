@@ -1,0 +1,86 @@
+/* ── Terminal xterm — always monospace (JS also sets fontFamily but CSS is defensive) ── */
+.xterm {
+  font-family: var(--font-mono);
+  padding: 0;
+  margin: 0;
+}
+
+/* xterm internal layers: never add padding/margin/border that could read as
+   a gap between the terminal canvas and its container. */
+.xterm,
+.xterm-screen,
+.xterm-viewport,
+.xterm-scrollable-element,
+.xterm-rows,
+.xterm-row {
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+}
+
+/* ── xterm overrides — extracted from TerminalPane.svelte ── */
+
+.terminal-pane .xterm-screen canvas {
+  image-rendering: pixelated;
+  touch-action: none;
+  transform: translateZ(0) !important;
+}
+
+.terminal-pane .xterm-viewport {
+  width: 100% !important;
+  background-color: var(--bg-terminal) !important;
+  overflow-y: auto !important;
+  overflow-x: hidden !important;
+  scrollbar-width: none !important; /* Firefox */
+  overscroll-behavior: contain;
+  touch-action: none;
+  -webkit-overflow-scrolling: touch;
+}
+
+.terminal-pane .xterm-viewport::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+}
+
+.xterm-rows,
+.xterm-row {
+  line-height: normal !important;
+  padding: 0 !important;
+  margin: 0 !important;
+}
+
+.terminal-pane .xterm {
+  width: 100%;
+  height: 100%;
+  font-variant-ligatures: none !important;
+  font-feature-settings: "liga" 0, "calt" 0 !important;
+  padding: 0;
+  margin: 0;
+}
+
+/* ── xterm 6 internal layout: stretch to fill the pane ──
+   xterm sizes `.xterm-scrollable-element` / `.xterm-screen` to an integer
+   number of character rows×cols, leaving a residual empty strip on the
+   bottom (row-quantization remainder) and on the right (col-quantization
+   remainder). The render canvas only paints the quantized region, so the
+   leftover strip shows the container background. Because xterm's theme
+    background (#080808) equals `--bg-terminal`, stretching these internal
+   containers to `100%` makes the residual strip blend seamlessly — the
+   visible "gap" disappears while xterm keeps rendering text to the
+   quantized cell grid. `!important` overrides xterm's runtime inline
+   `width`/`height` on `.xterm-screen`. The render canvases themselves are
+   NOT stretched (their CSS width stays at the cell-grid width set inline
+   by xterm) to keep glyphs crisp — the residual right strip is filled by
+   the opaque `.xterm-screen` background which is the same terminal bg. */
+.terminal-pane .xterm-scrollable-element {
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.terminal-pane .xterm-screen {
+  width: 100% !important;
+  height: 100% !important;
+  background-color: var(--bg-terminal) !important;
+  display: block;
+  overflow: hidden !important;
+}

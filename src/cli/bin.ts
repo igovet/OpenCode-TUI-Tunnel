@@ -383,8 +383,8 @@ program
 
     const nodeMajor = parseMajorNodeVersion();
     checks.push({
-      ok: nodeMajor >= 20,
-      message: `Node.js v${process.versions.node} (required: >=20)`,
+      ok: nodeMajor >= 22,
+      message: `Node.js v${process.versions.node} (required: >=22.12.0)`,
     });
 
     const tmuxInfo = await (async (): Promise<{ ok: boolean; detail: string }> => {

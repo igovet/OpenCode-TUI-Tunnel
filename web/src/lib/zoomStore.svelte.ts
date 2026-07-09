@@ -43,3 +43,18 @@ export function setZoom(size: number) {
     m.setFontSize(clamped);
   }
 }
+
+let refreshRAF: number | null = null;
+
+export function refreshAllManagers() {
+  if (refreshRAF !== null) {
+    return;
+  }
+  refreshRAF = requestAnimationFrame(() => {
+    refreshRAF = null;
+    for (const manager of terminalManagers) {
+      manager._webglAddon?.clearTextureAtlas();
+      manager.terminal.refresh(0, manager.terminal.rows - 1);
+    }
+  });
+}

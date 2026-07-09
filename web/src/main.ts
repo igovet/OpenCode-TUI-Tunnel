@@ -1,4 +1,5 @@
 import './styles/theme.css';
+import './styles/xterm-global.css';
 import { mount } from 'svelte';
 import { registerServiceWorker } from './lib/pwa.svelte';
 

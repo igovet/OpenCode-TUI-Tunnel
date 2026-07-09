@@ -175,11 +175,6 @@
     margin-bottom: var(--space-5);
   }
 
-  /* ── App-store card: relative surface so the dismiss X can sit top-right ── */
-  .install-card {
-    overflow: hidden;
-  }
-
   /* ── Row: [icon] [meta] [button] ── */
   .install-row {
     display: flex;

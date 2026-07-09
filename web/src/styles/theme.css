@@ -434,42 +434,6 @@ html[data-ui-font-size='lg'] {
   font-weight: var(--font-weight-bold);
 }
 
-/* ── Terminal xterm — always monospace (JS also sets fontFamily but CSS is defensive) ── */
-:global(.xterm) {
-  font-family: var(--font-mono);
-  padding: 0;
-  margin: 0;
-}
-
-/* ── Nuke every gap around the terminal ──
-   The user wants the terminal to fill the ENTIRE container edge-to-edge with
-   zero padding/margin/border/gap from any source. These rules strip the
-   grid-container padding/border/gap (which created the visible "отступы" the
-   user reported on desktop), and belt-and-suspenders every xterm internal
-   layer so no element introduces a visible inset. The residual
-   row/col-quantization strip beyond the render canvas is already filled by
-   the opaque .xterm-screen/.xterm-scrollable-element background (same
-   --bg-terminal), so stretching those layers to 100% makes the leftover
-   strip invisible. */
-.terminal-grid-container {
-  padding: 0 !important;
-  gap: 0 !important;
-  border: none !important;
-}
-
-/* xterm internal layers: never add padding/margin/border that could read as
-   a gap between the terminal canvas and its container. */
-:global(.xterm),
-:global(.xterm-screen),
-:global(.xterm-viewport),
-:global(.xterm-scrollable-element),
-:global(.xterm-rows),
-:global(.xterm-row) {
-  padding: 0 !important;
-  margin: 0 !important;
-  border: none !important;
-}
-
 /* ── Reduced motion (concept §5.5) ── */
 /* Disables non-essential motion for vestibular-sensitive users. Essential
    transitions collapse to a near-instant duration so state changes remain

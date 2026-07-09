@@ -206,33 +206,6 @@
     paneSizes[index + 1] = sum - newLeft;
   }
 
-  // ── Active-pane keyboard navigation (concept §5 a11y) ──
-  // Ctrl/Cmd+ArrowLeft/Right moves focus between visible panes. Registered on
-  // the capture phase so it outranks xterm's own keydown handler: terminal.ts
-  // only re-dispatches Alt+Arrow (for paging), not Ctrl+Arrow (which xterm
-  // would otherwise consume for cursor word-jump). Alt+1..9 / Alt+Arrow paging
-  // stays on the bubble-phase <svelte:window> handler below.
-  $effect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
-      if (e.key === 'ArrowLeft') {
-        if (visiblePanes.length > 1) {
-          moveActivePane(-1);
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      } else if (e.key === 'ArrowRight') {
-        if (visiblePanes.length > 1) {
-          moveActivePane(1);
-          e.preventDefault();
-          e.stopPropagation();
-        }
-      }
-    }
-    window.addEventListener('keydown', onKey, true);
-    return () => window.removeEventListener('keydown', onKey, true);
-  });
-
   function handleKeydown(e: KeyboardEvent) {
     if (containerWidth < 900) return;
     if (e.altKey && !e.ctrlKey && !e.shiftKey && !e.metaKey) {
@@ -285,6 +258,8 @@
         />
       </div>
       {#if i < visiblePanes.length - 1}
+        <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+        <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <div
           class="splitter"
           class:dragging={isDragging}
@@ -346,7 +321,6 @@
     height: 100%;
   }
 
-  .pane-wrapper,
   .pane_wrapper {
     min-width: 0;
     min-height: 0;
@@ -372,7 +346,7 @@
      grid container's overflow:hidden is the outer clip; the wrapper itself
      keeps its content (the pane) fully inside. */
 
-  :global(.terminal-grid > .pane-wrapper > .terminal-pane) {
+  :global(.terminal-grid > .pane_wrapper > .terminal-pane) {
     flex: 1;
     min-height: 0;
     height: 100%;

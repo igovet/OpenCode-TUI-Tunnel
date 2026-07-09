@@ -125,11 +125,8 @@
 {:else}
   <div class="connection-list" role="list" aria-label="SSH connections">
     {#each connections as conn, i (conn.id)}
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
-      <div
+      <button
         class="card-focus-wrapper"
-        role="listitem"
-        tabindex={focusedIndex === i ? 0 : -1}
         aria-label={`${conn.name} — ${conn.username}@${conn.host}:${conn.port}`}
         bind:this={cardEls[i]}
         onkeydown={(e) => handleKeydown(e, i)}
@@ -207,7 +204,7 @@
             </div>
           {/snippet}
         </Card>
-      </div>
+      </button>
     {/each}
   </div>
 {/if}
@@ -220,7 +217,17 @@
   }
 
   .card-focus-wrapper {
-    /* relied on global :focus-visible suppression */
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  .card-focus-wrapper:focus-visible {
+    outline: none;
   }
 
   .card-focus-wrapper:focus-visible > :global(.card) {

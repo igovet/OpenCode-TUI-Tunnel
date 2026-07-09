@@ -224,14 +224,15 @@
 <svelte:window onkeydown={handleKeydown} />
 
 {#if open}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="dialog-overlay"
     role="dialog"
+    tabindex="-1"
     aria-modal="true"
     aria-labelledby={titleId}
     aria-describedby={describedby}
     onclick={handleBackdropClick}
+    onkeydown={(e) => { if (e.key === 'Escape') handleBackdropClick(); }}
   >
     <!-- svelte-ignore a11y_no_static_element_interactions -->
     <div

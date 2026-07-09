@@ -1,4 +1,4 @@
-import { terminalManagers } from './zoomStore.svelte';
+import { terminalManagers, refreshAllManagers } from './zoomStore.svelte';
 import { get } from 'svelte/store';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -82,17 +82,6 @@ function shouldHandleNotification(payload: OpencodeNotifyPayload): boolean {
   return true;
 }
 
-export function refreshAllManagers() {
-  requestAnimationFrame(() => {
-    for (const manager of terminalManagers) {
-      manager._webglAddon?.clearTextureAtlas();
-      manager.terminal.refresh(0, manager.terminal.rows - 1);
-      const currentFontSize = manager.terminal.options.fontSize ?? 14;
-      manager.terminal.options.fontSize = currentFontSize;
-    }
-  });
-}
-
 export class TerminalManager {
   terminal: Terminal;
   fitAddon: FitAddon;
@@ -135,6 +124,14 @@ export class TerminalManager {
   private pinnedToBottom = false;
   private inputTransform: InputTransformState | null = null;
   _webglAddon?: import('@xterm/addon-webgl').WebglAddon;
+  private _documentCopyListener: ((event: ClipboardEvent) => void) | null = null;
+  private _onSelectionChangeDisposable: { dispose(): void } | null = null;
+  private _scrollRAF: number | null = null;
+  private pingInterval: number | null = null;
+  private reconnectDelay = 1000;
+  private reconnectAttempts = 0;
+  private static readonly MAX_RECONNECT_ATTEMPTS = 10;
+  private static readonly MAX_RECONNECT_DELAY_MS = 30000;
 
   constructor(element: HTMLElement, cols: number, rows: number) {
     this.element = element;
@@ -306,8 +303,13 @@ export class TerminalManager {
       if (!this.pinnedToBottom) {
         return;
       }
-
-      this.terminal.scrollToBottom();
+      if (this._scrollRAF !== null) {
+        return;
+      }
+      this._scrollRAF = requestAnimationFrame(() => {
+        this._scrollRAF = null;
+        this.terminal.scrollToBottom();
+      });
     });
 
     this.terminal.onResize((size) => {
@@ -487,16 +489,17 @@ export class TerminalManager {
     this.element.addEventListener('copy', this._copyListener);
 
     // Document-level copy event listener as fallback when element-level copy doesn't fire
-    document.addEventListener('copy', (event) => {
+    this._documentCopyListener = (event: ClipboardEvent) => {
       const text = this.terminal.getSelection() || window.getSelection()?.toString() || '';
       if (text && event.clipboardData) {
         event.clipboardData.setData('text/plain', text);
         event.preventDefault();
       }
-    });
+    };
+    document.addEventListener('copy', this._documentCopyListener);
 
     // Log xterm.js onSelectionChange to see if it ever fires
-    this.terminal.onSelectionChange(() => {
+    this._onSelectionChangeDisposable = this.terminal.onSelectionChange(() => {
       // noop: selection is retrieved on mouseup
     });
 
@@ -777,6 +780,8 @@ export class TerminalManager {
       }
       this.streamReady = false;
       this.hasConnectedOnce = true;
+      this.reconnectDelay = 1000;
+      this.reconnectAttempts = 0;
       this.setConnectionStatus('connected');
       socket.send(
         JSON.stringify({ type: 'hello', cols: this.terminal.cols, rows: this.terminal.rows }),
@@ -785,6 +790,14 @@ export class TerminalManager {
         clearTimeout(this.reconnectTimeout);
         this.reconnectTimeout = null;
       }
+      if (this.pingInterval) {
+        window.clearInterval(this.pingInterval);
+      }
+      this.pingInterval = window.setInterval(() => {
+        if (socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 30000);
     };
 
     socket.onmessage = (event) => {
@@ -858,17 +871,32 @@ export class TerminalManager {
 
       this.ws = null;
 
+      if (this.pingInterval) {
+        window.clearInterval(this.pingInterval);
+        this.pingInterval = null;
+      }
+
       if (this.sessionId && !this.streamReady && !this.exited) {
         this.markSessionEnded('Session ended', 1);
         return;
       }
 
       if (this.sessionId && !this.exited) {
+        if (this.reconnectAttempts >= TerminalManager.MAX_RECONNECT_ATTEMPTS) {
+          this.setConnectionStatus('disconnected');
+          return;
+        }
         this.setConnectionStatus('disconnected');
+        const delay = this.reconnectDelay;
+        this.reconnectDelay = Math.min(
+          TerminalManager.MAX_RECONNECT_DELAY_MS,
+          this.reconnectDelay * 2,
+        );
+        this.reconnectAttempts++;
         this.reconnectTimeout = window.setTimeout(() => {
           this.reconnectTimeout = null;
           this.attemptReconnect();
-        }, 2000);
+        }, delay);
       }
     };
 
@@ -890,6 +918,10 @@ export class TerminalManager {
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
+    }
+    if (this.pingInterval) {
+      window.clearInterval(this.pingInterval);
+      this.pingInterval = null;
     }
     if (this.ws) {
       this.ws.close();
@@ -1343,6 +1375,11 @@ export class TerminalManager {
       this._copyListener = null;
     }
 
+    if (this._documentCopyListener) {
+      document.removeEventListener('copy', this._documentCopyListener);
+      this._documentCopyListener = null;
+    }
+
     if (this._mouseupListener) {
       document.removeEventListener('mouseup', this._mouseupListener);
       this._mouseupListener = null;
@@ -1372,6 +1409,16 @@ export class TerminalManager {
     if (this._writeParsedDisposable) {
       this._writeParsedDisposable.dispose();
       this._writeParsedDisposable = null;
+    }
+
+    if (this._onSelectionChangeDisposable) {
+      this._onSelectionChangeDisposable.dispose();
+      this._onSelectionChangeDisposable = null;
+    }
+
+    if (this.pingInterval) {
+      window.clearInterval(this.pingInterval);
+      this.pingInterval = null;
     }
 
     this.connectionStatusListeners.clear();

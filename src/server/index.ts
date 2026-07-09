@@ -25,6 +25,7 @@ import {
   listSshConnections,
   logEvent,
   openDb,
+  pruneOldSessions,
   removePushSubscriptionByEndpoint,
   updateSshConnection,
   upsertPushSubscription,
@@ -96,12 +97,14 @@ interface OpencodeNotifyPayload {
 
 let runtimeState: RuntimeState | null = null;
 let stopInProgress: Promise<void> | null = null;
+let pruningInterval: ReturnType<typeof setInterval> | null = null;
 
 const WS_DEFAULT_COLS = 120;
 const WS_DEFAULT_ROWS = 30;
 const WS_BACKPRESSURE_HIGH_WATERMARK_BYTES = 256 * 1024;
 const WS_BACKPRESSURE_LOW_WATERMARK_BYTES = 64 * 1024;
 const WS_BACKPRESSURE_POLL_INTERVAL_MS = 8;
+const WS_BACKPRESSURE_BUFFER_SIZE = 64 * 1024; // 64KB ring buffer for backpressure
 const WS_READY_STATE_OPEN = 1;
 
 function expandHomePath(inputPath: string): string {
@@ -1060,6 +1063,13 @@ function setupRoutes(
     const clientIp = request.ip;
     const now = Date.now();
 
+    // Clean up expired entries from the rate limiter map to prevent unbounded growth
+    for (const [key, val] of sshTestRateLimiter) {
+      if (now - val.windowStart > RATE_LIMIT_WINDOW_MS * 2) {
+        sshTestRateLimiter.delete(key);
+      }
+    }
+
     // Check rate limit
     const entry = sshTestRateLimiter.get(clientIp);
     if (entry) {
@@ -1106,7 +1116,12 @@ function setupRoutes(
       let handleClosed = false;
       let ptyPausedForBackpressure = false;
       let backpressureTimer: NodeJS.Timeout | null = null;
+      let backpressurePollCount = 0;
+      const BACKPRESSURE_MAX_POLLS = 100; // 100 * 8ms = 800ms max wait before force-resume
       const decoder = new StringDecoder('utf8');
+      // Ring buffer for backpressure: stores Buffer chunks instead of dropping
+      const backpressureBuffer: Buffer[] = [];
+      let backpressureBufferBytes = 0;
 
       const clearBackpressureTimer = (): void => {
         if (!backpressureTimer) {
@@ -1131,10 +1146,30 @@ function setupRoutes(
 
           const bufferedAmount = typeof ws.bufferedAmount === 'number' ? ws.bufferedAmount : 0;
           if (bufferedAmount > WS_BACKPRESSURE_LOW_WATERMARK_BYTES) {
+            backpressurePollCount++;
+            if (backpressurePollCount >= BACKPRESSURE_MAX_POLLS) {
+              // Force-resume after max polls to prevent runaway timer
+              handle.resume();
+              ptyPausedForBackpressure = false;
+              backpressurePollCount = 0;
+              return;
+            }
             scheduleBackpressureResumeCheck();
             return;
           }
 
+          backpressurePollCount = 0; // Reset counter when socket drains
+          // Flush buffered data before resuming
+          while (backpressureBuffer.length > 0) {
+            const chunk = backpressureBuffer.shift()!;
+            backpressureBufferBytes -= chunk.length;
+            try {
+              ws.send(chunk.toString('utf8'));
+            } catch {
+              closeHandle();
+              return;
+            }
+          }
           handle.resume();
           ptyPausedForBackpressure = false;
         }, WS_BACKPRESSURE_POLL_INTERVAL_MS);
@@ -1153,6 +1188,8 @@ function setupRoutes(
       const closeHandle = () => {
         clearBackpressureTimer();
         decoder.end();
+        backpressureBuffer.length = 0;
+        backpressureBufferBytes = 0;
 
         if (!handle || handleClosed) {
           return;
@@ -1217,7 +1254,18 @@ function setupRoutes(
           }
 
           if (ptyPausedForBackpressure) {
-            // Backpressure mode intentionally drops stale PTY frames until the socket drains.
+            // Buffer data during backpressure; drop oldest if buffer is full
+            if (backpressureBufferBytes + raw.length > WS_BACKPRESSURE_BUFFER_SIZE) {
+              // Drop oldest entries until we have room
+              while (backpressureBuffer.length > 0 && backpressureBufferBytes + raw.length > WS_BACKPRESSURE_BUFFER_SIZE) {
+                const oldest = backpressureBuffer.shift()!;
+                backpressureBufferBytes -= oldest.length;
+              }
+            }
+            if (backpressureBufferBytes + raw.length <= WS_BACKPRESSURE_BUFFER_SIZE) {
+              backpressureBuffer.push(raw);
+              backpressureBufferBytes += raw.length;
+            }
             return;
           }
 
@@ -1446,6 +1494,17 @@ export async function startServer(config: AppConfig): Promise<ServerStartInfo> {
     console.warn('[server] Stale mount cleanup failed (non-fatal):', error);
   }
 
+  // Prune old exited sessions and their events on startup and hourly
+  try {
+    pruneOldSessions(db, config.sessions.retainExitedSessionHours);
+    pruningInterval = setInterval(
+      () => pruneOldSessions(db, config.sessions.retainExitedSessionHours),
+      60 * 60 * 1000,
+    );
+  } catch (error) {
+    console.warn('[server] Session pruning failed (non-fatal):', error);
+  }
+
   const app = Fastify({ logger: true });
   const webRoot = resolveWebRoot();
 
@@ -1486,6 +1545,12 @@ export async function stopServer(): Promise<void> {
     if (!state) {
       stopInProgress = null;
       return;
+    }
+
+    // Clear the session pruning interval
+    if (pruningInterval) {
+      clearInterval(pruningInterval);
+      pruningInterval = null;
     }
 
     // Clean up all active SSHFS mounts before shutting down

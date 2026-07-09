@@ -5,7 +5,7 @@
 <p align="center">
   <a href="https://www.npmjs.com/package/@igovet/opencode-tui-tunnel"><img alt="npm version" src="https://img.shields.io/npm/v/%40igovet%2Fopencode-tui-tunnel?style=for-the-badge"></a>
   <a href="./LICENSE"><img alt="license: MIT" src="https://img.shields.io/badge/license-MIT-green?style=for-the-badge"></a>
-  <a href="https://nodejs.org/en/download"><img alt="node greater than or equal to 20" src="https://img.shields.io/badge/node-%3E%3D20-339933?style=for-the-badge&logo=node.js&logoColor=white"></a>
+  <a href="https://nodejs.org/en/download"><img alt="node greater than or equal to 22.12.0" src="https://img.shields.io/badge/node-%3E%3D22.12.0-339933?style=for-the-badge&logo=node.js&logoColor=white"></a>
 </p>
 
 ## ✨ What is OpenCode TUI Tunnel?
@@ -18,7 +18,7 @@ It exists to make terminal-first workflows easier to access anywhere: local lapt
 
 - 🖥️ **Browser terminal** — Multi-terminal grid with draggable splitters, resizable panes, keyboard navigation (Ctrl/Cmd+Arrow), context menu, and drag-to-reorder tabs
 - 📊 **Dashboard** — Modern glass dashboard with Recent Projects hero section, filter chips (All/Local/SSH/Active/Discovered), unified sessions list, compact LaunchBar, and collapsible SSH connections panel
-- 🎨 **2026 Design System** — Dark dev-tool premium visual language with glassmorphism surfaces, Geist + JetBrains Mono typography, soft radius tokens, and full accessibility pass (skip-link, focus-trap, reduced-motion, contrast AA)
+- 🎨 **Design System** — Dark dev-tool premium visual language with glassmorphism surfaces, Geist + JetBrains Mono typography, soft radius tokens, and full accessibility pass (skip-link, focus-trap, reduced-motion, contrast AA)
 - 🧩 **12 UI primitives** — Reusable component library: Button (4 variants), Card (glass/solid), Dialog (focus-trap), Input, Select, Toggle, Tooltip, Badge, StatusDot, Icon, Toast, ToastProvider — all CSS-token-driven
 - 🔔 **Global toast system** — Non-blocking notifications for errors (auto-dismiss 5s, pause on hover, swipe on mobile, aria-live)
 - ⚙️ **Multi-section Settings** — Dedicated settings modal with Notifications, Appearance (reduce motion, font size), Terminal (scrollback, font size), and Keyboard sections
@@ -65,7 +65,7 @@ See [CHANGELOG.md](./CHANGELOG.md) for version history.
 
 ## Requirements
 
-- Node.js >= 20
+- Node.js >= 22.12.0
 - tmux
 - opencode
 
@@ -85,7 +85,7 @@ npx @igovet/opencode-tui-tunnel
 
 ### 1) Prerequisites
 
-- **Node.js >= 20.0.0**
+- **Node.js >= 22.12.0**
   - macOS: https://nodejs.org/en/download
   - Linux: https://nodejs.org/en/download
 - **tmux**
@@ -146,7 +146,7 @@ opencode-tui-tunnel doctor
   - Temporary workaround (less preferred): run with `sudo`.
 - **Native module build errors**
   - Make sure `python3` and compiler tools are installed (`build-essential` or `Development Tools`).
-  - Check your Node.js version (must be >= 20.0.0).
+  - Check your Node.js version (must be >= 22.12.0).
 - **`tmux: command not found`**
   - Install `tmux` via your package manager and verify the binary is available in `PATH`.
   - Check your environment with: `opencode-tui-tunnel doctor`.
@@ -477,7 +477,7 @@ Run environment diagnostics.
 
 #### Checks
 
-- Node.js version (required: `>=20`)
+- Node.js version (required: `>=22.12.0`)
 - `tmux` availability
 - `opencode` availability in `PATH`
 - Config directory availability/writability
@@ -518,6 +518,7 @@ Key settings:
 The visual interface has been fully redesigned with a "dark dev-tool premium" aesthetic inspired by tools like Linear, Warp, and Arc.
 
 ### Design System
+
 - **Colors:** Deep `#05060a` base with glass surfaces (`backdrop-filter: blur(12-20px)` + subtle 1px border), accent-blue highlights, and gradient accents
 - **Typography:** Geist for UI text, JetBrains Mono for terminal content — loaded via non-blocking preconnects
 - **Spacing/Radius:** Soft radius tokens (4px/6px/8px) for cards and dialogs; 0px radius for terminal panes for a crisp edge

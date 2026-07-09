@@ -17,7 +17,7 @@ const DEFAULTS: Settings = {
   reduceMotion: false,
   uiFontSize: 'md',
   terminalFontSize: 14,
-  scrollback: 10000,
+  scrollback: 1000,
   maxTerminals: 0,
   terminalLayout: 'horizontal',
 };
