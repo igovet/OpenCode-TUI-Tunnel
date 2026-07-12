@@ -1,4 +1,5 @@
-const CACHE_NAME = 'opencode-tui-v1';
+const CACHE_VERSION = 'v1';
+const CACHE_NAME = `opencode-tui-${CACHE_VERSION}`;
 
 // Assets to pre-cache on install (will be populated by build)
 const STATIC_ASSETS = ['/', '/index.html', '/manifest.webmanifest'];
@@ -20,7 +21,9 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((cacheNames) => {
       return Promise.all(
-        cacheNames.filter((name) => name !== CACHE_NAME).map((name) => caches.delete(name)),
+        cacheNames
+          .filter((name) => name !== CACHE_NAME && name.startsWith('opencode-tui-'))
+          .map((name) => caches.delete(name)),
       );
     }),
   );

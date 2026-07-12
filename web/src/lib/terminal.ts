@@ -1,4 +1,4 @@
-import { terminalManagers, refreshAllManagers } from './zoomStore.svelte';
+import { refreshAllManagers } from './zoomStore.svelte';
 import { get } from 'svelte/store';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -123,15 +123,16 @@ export class TerminalManager {
   private lastAttentionClearAt = 0;
   private pinnedToBottom = false;
   private inputTransform: InputTransformState | null = null;
-  _webglAddon?: import('@xterm/addon-webgl').WebglAddon;
   private _documentCopyListener: ((event: ClipboardEvent) => void) | null = null;
   private _onSelectionChangeDisposable: { dispose(): void } | null = null;
+  _canvasAddon?: import('@xterm/addon-canvas').CanvasAddon;
   private _scrollRAF: number | null = null;
   private pingInterval: number | null = null;
   private reconnectDelay = 1000;
   private reconnectAttempts = 0;
   private static readonly MAX_RECONNECT_ATTEMPTS = 10;
   private static readonly MAX_RECONNECT_DELAY_MS = 30000;
+  private _disposed = false;
 
   constructor(element: HTMLElement, cols: number, rows: number) {
     this.element = element;
@@ -216,7 +217,7 @@ export class TerminalManager {
     // `dims.cols`, so we must RECOMPUTE cols from the full parent width with
     // zero scrollbar reservation. We use the renderer's measured CSS cell
     // width for an exact result. As a fallback when renderDims isn't ready
-    // yet (e.g., a fit() before the WebGL/DOM renderer attached), we add back
+    // yet (e.g., a fit() before the Canvas/DOM renderer attached), we add back
     // the integer number of cells FitAddon over-deducted: 14px / cellWidth.
     const originalPropose = this.fitAddon.proposeDimensions.bind(this.fitAddon);
     this.fitAddon.proposeDimensions = () => {
@@ -280,9 +281,7 @@ export class TerminalManager {
         // atob() returns a binary string where each charCode is a byte.
         // Use TextDecoder to properly decode UTF-8 multi-byte sequences
         // (Cyrillic, emoji, etc.) instead of treating bytes as UTF-16 code units.
-        const text = new TextDecoder().decode(
-          Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)),
-        );
+        const text = new TextDecoder().decode(Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)));
         navigator.clipboard.writeText(text);
       } catch (e) {
         console.warn('[TerminalManager] OSC 52 clipboard write failed:', e);
@@ -454,19 +453,14 @@ export class TerminalManager {
     this.terminal.loadAddon(unicode11Addon);
     this.terminal.unicode.activeVersion = '11';
 
-    // Try WebGL first — fallback is xterm's built-in DOM renderer
+    // Use canvas renderer for reliable rendering
     try {
-      const { WebglAddon } = await import('@xterm/addon-webgl');
-      const webglAddon = new WebglAddon();
-      // If WebGL context is lost (e.g., GPU reset), xterm falls back to built-in DOM renderer.
-      webglAddon.onContextLoss(() => {
-        webglAddon.dispose();
-        this._webglAddon = undefined;
-      });
-      this.terminal.loadAddon(webglAddon);
-      this._webglAddon = webglAddon;
+      const { CanvasAddon } = await import('@xterm/addon-canvas');
+      const canvasAddon = new CanvasAddon();
+      this.terminal.loadAddon(canvasAddon);
+      this._canvasAddon = canvasAddon;
     } catch (e) {
-      console.warn('WebglAddon unavailable, using built-in DOM renderer:', e);
+      console.warn('CanvasAddon unavailable, using built-in DOM renderer:', e);
     }
 
     window.addEventListener('focus', (this._handleFocusRefresh = refreshAllManagers));
@@ -663,7 +657,7 @@ export class TerminalManager {
       if (Math.abs(deltaY) > 0) {
         // Dispatch to xterm's viewport element where its scroll handler listens,
         // not to e.target which could be a canvas or other element inside xterm.
-        const target = this._xtermViewport ?? e.target as HTMLElement;
+        const target = this._xtermViewport ?? (e.target as HTMLElement);
         target.dispatchEvent(
           new WheelEvent('wheel', {
             deltaY: deltaY * 1.5,
@@ -930,6 +924,7 @@ export class TerminalManager {
   }
 
   fit(): void {
+    if (this._disposed) return;
     if (this.element.clientWidth <= 0 || this.element.clientHeight <= 0) {
       return;
     }
@@ -940,9 +935,6 @@ export class TerminalManager {
       this.fitAddon.fit();
       if (shouldKeepBottomPinned) {
         this.terminal.scrollToBottom();
-      }
-      if (this._webglAddon) {
-        this._webglAddon.clearTextureAtlas();
       }
       try {
         localStorage.setItem('termLastCols', String(this.terminal.cols));
@@ -1321,6 +1313,8 @@ export class TerminalManager {
   }
 
   dispose(): void {
+    this._disposed = true;
+
     if (this._handleFocusRefresh) {
       window.removeEventListener('focus', this._handleFocusRefresh);
     }
@@ -1424,6 +1418,12 @@ export class TerminalManager {
     this.connectionStatusListeners.clear();
 
     this.disconnect();
+
+    if (this._canvasAddon) {
+      this._canvasAddon.dispose();
+      this._canvasAddon = undefined;
+    }
+
     this.terminal.dispose();
   }
 }

@@ -4,6 +4,7 @@
   import { requestedWorkspacePage } from '../lib/workspacePage';
   import { workspacePage, workspaceTotalPages, workspaceMaxPanes } from '../lib/workspaceDisplay';
   import { getSettings } from '../lib/settings';
+  import { refreshAllManagers } from '../lib/zoomStore.svelte';
 
   let containerWidth = $state(0);
   let containerHeight = $state(0);
@@ -49,6 +50,7 @@
         workspacePage.set(targetPage);
       }
       requestedWorkspacePage.set(null); // consume
+      refreshAllManagers();
     }
   });
 
@@ -213,6 +215,7 @@
         const pageIdx = parseInt(e.key) - 1;
         if (pageIdx < totalPages) {
           workspacePage.set(pageIdx);
+          refreshAllManagers();
           activateFirstTabOnPage(pageIdx);
           e.preventDefault();
         }
@@ -220,6 +223,7 @@
         if ($workspacePage > 0) {
           const newPage = $workspacePage - 1;
           workspacePage.set(newPage);
+          refreshAllManagers();
           activateFirstTabOnPage(newPage);
           e.preventDefault();
         }
@@ -227,6 +231,7 @@
         if ($workspacePage < totalPages - 1) {
           const newPage = $workspacePage + 1;
           workspacePage.set(newPage);
+          refreshAllManagers();
           activateFirstTabOnPage(newPage);
           e.preventDefault();
         }

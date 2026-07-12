@@ -75,7 +75,7 @@
       if (resizeTimer) clearTimeout(resizeTimer);
       resizeTimer = setTimeout(() => {
         if (manager) {
-          manager.fitAddon.fit();
+          manager.fit();
         }
       }, 50);
     });
@@ -91,12 +91,6 @@
           manager.terminal.focus();
         }
         activeTerminalWrite.set((data) => manager!.onData(data)); activeTerminalRef.set(manager);
-        // Refresh ALL visible terminals when a pane becomes active
-        // (intra-window switch does not fire window blur/focus events)
-        refreshAllManagers();
-      } else if (!isActive && manager) {
-        // Also refresh when losing active status
-        refreshAllManagers();
       }
     }
   });
@@ -112,6 +106,10 @@
     let initialRo: ResizeObserver | null = null;
 
     (async () => {
+      // Wait for fonts to load before creating terminal
+      // JetBrains Mono must be available for correct char measurement
+      await document.fonts.ready;
+
       const { TerminalManager: TM } = await import('../lib/terminal');
       if (disposed) return;
 
@@ -145,13 +143,17 @@
 
             try {
               await new Promise((resolve) => setTimeout(resolve, 100));
-              localManager!.fitAddon.fit();
+              if (disposed) return;
+              localManager!.fit();
             } catch {
               // intentional
             }
 
+            if (disposed) return;
             initialRo!.disconnect();
-            setupResizeObserver(container);
+            if (container) {
+              setupResizeObserver(container);
+            }
 
             const activeTab = get(workspace).tabs.find((candidate) => candidate.sessionId === sessionId);
             const isEnded = activeTab ? isTerminalTabEnded(activeTab.status) : false;
@@ -168,7 +170,6 @@
               }
               activeTerminalWrite.set((data) => localManager!.onData(data));
               activeTerminalRef.set(localManager!);
-              refreshAllManagers();
             }
           })();
         }
