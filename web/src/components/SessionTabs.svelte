@@ -164,6 +164,7 @@
 
   function doClose(sessionId: string) {
     workspace.closeTab(sessionId);
+    refreshAllManagers();
     if ($workspace.tabs.length === 0) {
       ongoHome();
     }

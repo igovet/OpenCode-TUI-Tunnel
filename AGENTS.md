@@ -140,6 +140,12 @@ Visual language defined in `web/src/styles/theme.css` using CSS custom propertie
 - PWA files are static (`web/public/manifest.webmanifest`, `web/public/sw.js`), not plugin-generated.
 - Icon generator (`scripts/generate-icons.mjs`) creates all 4 icon variants: `icon-192.png`, `icon-512.png`, `icon-maskable-192.png`, `icon-maskable-512.png`, plus `apple-touch-icon.png`. The T logomark uses blue→cyan→green gradient on dark background.
 - UI text hardcodes max session wording as `(8)`; may drift from config.
+- **2 dead DB tables:** `app_state` and `reconnect_tokens` are created but never read/written.
+- **1 dead config key:** `basePath` in `AppConfig` is defined but never consumed.
+- **Passphrase migration is transparent:** `ssh_connections.passphrase` (plaintext, legacy) is migrated to `encrypted_passphrase` (AES-256-GCM) on first read — the first read after migration is a write operation.
+- **SSHFS has no passphrase support:** only key-based auth works for SSHFS mounts.
+- **Rate limiter is in-memory only:** SSH test rate limiter (5/min/IP) resets on server restart.
+- **Zero test coverage:** no unit/integration tests exist for any feature. Only `test/cli-smoke.test.ts` (CLI help/version) and `test/e2e/basic.test.ts` (Playwright homepage load).
 
 ## CI/CD Facts (current workflow)
 

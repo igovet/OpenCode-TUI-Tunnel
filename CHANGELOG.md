@@ -5,6 +5,28 @@ All notable changes to this project are documented here.
 ---
 
 <details open>
+<summary><strong>v0.3.2</strong> — 2026-07-12</summary>
+
+### 🎯 Features
+
+- Switched from WebGL renderer to Canvas renderer (`@xterm/addon-canvas`) for reliable terminal rendering
+- Added font-loading guard (`document.fonts.ready`) to prevent rendering artifacts from fallback fonts
+- Added service worker cache versioning for proper cache invalidation on rebuild
+
+### 🔧 Bug Fixes
+
+- Fixed GPU rendering freezes when switching between or closing terminal sessions
+- Fixed rendering corruption on page load caused by premature WebGL atlas initialization
+- Fixed ResizeObserver crash when terminal pane is disposed during async initialization
+- Fixed page-switch freeze caused by CanvasAddon dispose order race condition
+- Fixed `scrollToBottom()` crash on partially-disposed terminals during page switch
+- Fixed terminal font measurement mismatch (textarea used `monospace` instead of `JetBrains Mono`)
+- Fixed `refreshAllManagers()` destroying WebGL texture atlases for all terminals during initialization
+- Fixed daemon serving stale build from global npm package instead of local project
+
+</details>
+
+<details>
 <summary><strong>v0.3.1</strong> — 2026-07-09</summary>
 
 ### 🎯 Features
@@ -124,7 +146,6 @@ All notable changes to this project are documented here.
 ### 🔧 Bug Fixes
 
 - **Clipboard copy in SSH mode (multi-part fix).** Fixed text selection and copying in SSH sessions through three coordinated changes:
-
   - **Backend:** Server now unconditionally strips xterm mouse tracking sequences (`\x1b[?1003h`/`\x1b[?1003l`) for ALL sessions (local and SSH) to fix xterm.js selection returning 0 with DECSET 1003. Native browser text selection and copy work for all session types; TUI hover effects are disabled.
 
   - **Frontend:** Replaced `terminal.hasSelection()` with `terminal.getSelection()` in copy handlers. When xterm.js mouse tracking mode (DECSET 1003) is active, `hasSelection()` incorrectly returns `false` even when text is selected, causing the copy handler to skip writing to clipboard.

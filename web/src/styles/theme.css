@@ -275,6 +275,16 @@ body {
   }
 }
 
+/* ── xterm.js textarea font correction ── */
+/* The helper textarea is used by xterm.js for character-dimension measurement.
+   It must match the rendered terminal font (JetBrains Mono 14px) exactly,
+   otherwise cell-size miscalculation causes rendering artifacts (gaps, offsets,
+   broken lines). */
+.xterm-helper-textarea {
+  font-family: var(--font-mono) !important;
+  font-size: var(--font-size-base) !important;
+}
+
 /* ── Responsive breakpoints ── */
 @media (max-width: 640px) {
   :root {

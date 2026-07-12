@@ -14,7 +14,7 @@ function getStoredZoom(): number {
   if (typeof localStorage === 'undefined') return isMobile() ? DEFAULT_MOBILE : DEFAULT_DESKTOP;
   const key = isMobile() ? MOBILE_KEY : DESKTOP_KEY;
   const stored = localStorage.getItem(key);
-  return stored ? parseInt(stored, 10) : (isMobile() ? DEFAULT_MOBILE : DEFAULT_DESKTOP);
+  return stored ? parseInt(stored, 10) : isMobile() ? DEFAULT_MOBILE : DEFAULT_DESKTOP;
 }
 
 function saveZoom(size: number) {
@@ -24,15 +24,15 @@ function saveZoom(size: number) {
 }
 
 export const zoomState = $state({
-    value: getStoredZoom()
+  value: getStoredZoom(),
 });
 
 export const terminalManagers = new Set<TerminalManager>();
 
 export function registerManager(manager: TerminalManager) {
-    terminalManagers.add(manager);
-    manager.setFontSize(zoomState.value);
-    return () => terminalManagers.delete(manager);
+  terminalManagers.add(manager);
+  manager.setFontSize(zoomState.value);
+  return () => terminalManagers.delete(manager);
 }
 
 export function setZoom(size: number) {
@@ -53,7 +53,6 @@ export function refreshAllManagers() {
   refreshRAF = requestAnimationFrame(() => {
     refreshRAF = null;
     for (const manager of terminalManagers) {
-      manager._webglAddon?.clearTextureAtlas();
       manager.terminal.refresh(0, manager.terminal.rows - 1);
     }
   });
