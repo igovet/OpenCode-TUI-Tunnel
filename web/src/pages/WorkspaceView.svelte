@@ -5,7 +5,7 @@
   import { observeMobileTouchViewport } from '../lib/device';
   import { getCurrentPushSubscription, subscribeToPushNotifications } from '../lib/notifications';
   import { getSettings, setSettings } from '../lib/settings';
-  import { terminalManagers } from '../lib/zoomStore.svelte';
+  import { refreshAllManagersVisual } from '../lib/zoomStore.svelte';
   import { get } from 'svelte/store';
   
   let { headerHeight = 40 } = $props<{ headerHeight?: number }>();
@@ -64,38 +64,16 @@
       return;
     }
 
-    const reconnectActiveTerminal = () => {
-      const activeTerminal = get(activeTerminalRef);
-      activeTerminal?.reconnectIfDisconnected();
-      for (const manager of terminalManagers) {
-        if (manager !== activeTerminal) {
-          manager.reconnectIfDisconnected();
-        }
-      }
-    };
-
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
-        reconnectActiveTerminal();
+        refreshAllManagersVisual();
       }
-    };
-
-    const handlePageShow = () => {
-      reconnectActiveTerminal();
-    };
-
-    const handleFocus = () => {
-      reconnectActiveTerminal();
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('pageshow', handlePageShow);
-    window.addEventListener('focus', handleFocus);
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('pageshow', handlePageShow);
-      window.removeEventListener('focus', handleFocus);
     };
   });
 </script>

@@ -20,6 +20,15 @@ const assets = [
     from: resolve(projectRoot, 'assets/opencode-tui-config.json'),
     to: resolve(projectRoot, 'dist/assets/opencode-tui-config.json'),
   },
+  {
+    from: resolve(projectRoot, 'assets/opencode2-plugins/opencode2-tui-notify.js'),
+    to: resolve(projectRoot, 'dist/assets/opencode2-plugins/opencode2-tui-notify.js'),
+  },
+
+  {
+    from: resolve(projectRoot, 'assets/opencode2-plugins/opencode2-tui-config.json'),
+    to: resolve(projectRoot, 'dist/assets/opencode2-plugins/opencode2-tui-config.json'),
+  },
 ];
 
 for (const asset of assets) {

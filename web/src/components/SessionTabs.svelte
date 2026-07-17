@@ -143,7 +143,7 @@
     return () => window.removeEventListener('pointerdown', onOverflowPointerDown);
   });
 
-  // ── Activation (preserved logic: activateTab + requestedWorkspacePage + refresh) ──
+  // ── Activation (activateTab + requestedWorkspacePage, no refreshAllManagers) ──
   function activate(sessionId: string) {
     workspace.activateTab(sessionId);
     ongoWorkspace();
@@ -153,7 +153,7 @@
       const size = Math.max(1, $workspaceMaxPanes);
       requestedWorkspacePage.set(Math.floor(tabIndex / size));
     }
-    refreshAllManagers();
+    // Do NOT call refreshAllManagers() — it causes reconnect on every tab click
   }
 
   // ── Close flow (preserved) ──

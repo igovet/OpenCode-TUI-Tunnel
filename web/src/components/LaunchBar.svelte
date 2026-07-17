@@ -16,12 +16,16 @@
     sshConnections = [],
     onLaunch,
     disabled = false,
+    opencodeVersion,
+    standalone = $bindable(false),
   }: {
     cwd: string;
     backendId: string;
     sshConnections: SshConnection[];
     onLaunch: (cwd: string, backendId: string) => void;
     disabled?: boolean;
+    opencodeVersion?: 'v1' | 'v2';
+    standalone?: boolean;
   } = $props();
 
   const selectOptions = $derived([
@@ -45,6 +49,10 @@
     if (cwd && !disabled) {
       onLaunch(cwd, backendId);
     }
+  }
+
+  function toggleStandalone() {
+    standalone = !standalone;
   }
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -75,6 +83,24 @@
           aria-label="Backend"
         />
       </div>
+
+      {#if opencodeVersion === 'v2'}
+        <button
+          type="button"
+          class="standalone-toggle"
+          class:active={standalone}
+          onclick={toggleStandalone}
+          aria-checked={standalone}
+          role="switch"
+          aria-label="Standalone mode"
+          title={standalone ? 'Standalone: on' : 'Standalone: off'}
+        >
+          <span class="standalone-track">
+            <span class="standalone-thumb"></span>
+          </span>
+          <span class="standalone-label">Standalone</span>
+        </button>
+      {/if}
 
       <Button
         variant="primary"
@@ -118,9 +144,74 @@
     flex-shrink: 0;
   }
 
+  .standalone-toggle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    padding: 0;
+    color: var(--text-muted);
+    transition: color 0.15s ease;
+  }
+
+  .standalone-toggle:hover {
+    color: var(--text-secondary);
+  }
+
+  .standalone-toggle:focus-visible {
+    outline: 2px solid var(--border-accent);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+  }
+
+  .standalone-toggle.active {
+    color: var(--text-accent);
+  }
+
+  .standalone-track {
+    width: 36px;
+    height: 20px;
+    border-radius: 10px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-default);
+    position: relative;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease;
+    flex-shrink: 0;
+  }
+
+  .standalone-toggle.active .standalone-track {
+    background: var(--accent-blue);
+    border-color: var(--accent-blue);
+  }
+
+  .standalone-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--text-primary);
+    transition: transform 0.15s ease;
+  }
+
+  .standalone-toggle.active .standalone-thumb {
+    transform: translateX(16px);
+  }
+
+  .standalone-label {
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium);
+    white-space: nowrap;
+  }
+
   /* ── Mobile: stack vertically so the path input spans full width and
-       the backend select + Run button sit on a row below it. Prevents
-       horizontal overflow on phones (≤640px). ── */
+        the backend select + Run button sit on a row below it. Prevents
+        horizontal overflow on phones (≤640px). ── */
   @media (max-width: 640px) {
     .launch-bar {
       flex-direction: column;
@@ -136,11 +227,17 @@
     .action-row {
       align-items: stretch;
       gap: var(--space-2);
+      flex-wrap: wrap;
     }
 
     .backend-selector {
       min-width: 0;
       flex: 1;
+    }
+
+    .standalone-toggle {
+      flex: 1;
+      justify-content: center;
     }
   }
 </style>

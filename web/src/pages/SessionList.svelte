@@ -9,7 +9,6 @@
     attachTmuxSession,
     launchSession,
     deleteSession,
-    getSession,
     listSshConnections,
     getRemoteTmuxSessions,
     attachRemoteTmuxSession,
@@ -17,6 +16,7 @@
   import { get } from 'svelte/store';
   import { workspace } from '../lib/workspace';
   import { showToast } from '$lib/toastStore.svelte';
+  import { getSettings, setSettings } from '$lib/settings.svelte.js';
 
   // NEW structural components (Phase A foundation)
   import SessionRow from '../components/SessionRow.svelte';
@@ -49,6 +49,29 @@
   // ── LaunchBar state ──
   let launchCwd = $state('');
   let backendId = $state<string>('local');
+  let standalone = $state(getSettings().standaloneByDefault);
+
+  // Sync LaunchBar standalone toggle with settings
+  $effect(() => {
+    standalone = getSettings().standaloneByDefault;
+  });
+
+  // ── Per-project standalone state (keyed by path+sshConnectionId) ──
+  let standaloneMap = $state(new Map<string, boolean>());
+
+  function getItemKey(item: UnifiedSessionItem): string {
+    return item.path + '::' + (item.sshConnectionId ?? 'local');
+  }
+
+  function toggleItemStandalone(item: UnifiedSessionItem) {
+    const key = getItemKey(item);
+    standaloneMap.set(key, !(standaloneMap.get(key) ?? getSettings().standaloneByDefault));
+    // Trigger reactivity by replacing the Map
+    standaloneMap = new Map(standaloneMap);
+  }
+
+  // ── Reactive settings read (settings are stored in $lib/settings.svelte.ts) ──
+  const settings = $derived(getSettings());
 
   // ── Filter chips state ──
   let sessionFilter = $state<string>('all');
@@ -86,6 +109,7 @@
     // Carried through for handlers:
     sshConnectionId?: string;
     tmuxName?: string;
+    standalone?: boolean;
   }
 
   /**
@@ -117,6 +141,7 @@
         sessionId: s.id,
         sshConnectionId: s.sshConnectionId,
         tmuxName: s.tmuxName,
+        standalone: (s as { standalone?: boolean }).standalone,
       });
       void conn;
     }
@@ -328,9 +353,15 @@
   }
 
   // Shared launch primitive (preserves the 409 → toast / generic → toast behavior).
-  async function doLaunch(cwd: string, sshId?: string): Promise<void> {
+  async function doLaunch(cwd: string, sshId?: string, itemStandalone?: boolean): Promise<void> {
     const { cols, rows } = getSavedTermDims();
-    const { session } = await launchSession(cwd, cols, rows, sshId);
+    const settings = getSettings();
+    const effectiveStandalone = itemStandalone ?? standaloneMap.get(cwd + '::' + (sshId ?? 'local')) ?? settings.standaloneByDefault;
+    const { session } = await launchSession(
+      cwd, cols, rows, sshId,
+      settings.opencodeVersion,
+      effectiveStandalone,
+    );
     openSessionTab(session);
     await load();
   }
@@ -353,8 +384,10 @@
   async function onLaunchBarLaunch(cwd: string, backend: string) {
     if (!cwd) return;
     const sshId = backend === 'local' ? undefined : backend;
+    const settings = getSettings();
+    const effectiveStandalone = standalone ?? settings.standaloneByDefault;
     try {
-      await doLaunch(cwd, sshId);
+      await doLaunch(cwd, sshId, effectiveStandalone);
       launchCwd = '';
       backendId = 'local';
     } catch (e) {
@@ -371,7 +404,9 @@
   // an active session row activates the existing session.
   async function resumeProject(item: UnifiedSessionItem) {
     try {
-      await doLaunch(item.path, item.sshConnectionId);
+      const key = getItemKey(item);
+      const itemStandalone = standaloneMap.get(key) ?? getSettings().standaloneByDefault;
+      await doLaunch(item.path, item.sshConnectionId, itemStandalone);
     } catch (e) {
       handleLaunchError(e);
     }
@@ -483,11 +518,13 @@
   }
 
   // SshConnectionSection callbacks.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   function onSshTest(_conn: SshConnection) {
     // SshConnectionList handles its own test UI/badges; this is a passthrough
     // hook for future toast-on-failure enhancement.
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   function onSshDelete(_conn: SshConnection) {
     // Deletion is handled inside SshConnectionList with its own confirm flow;
     // refresh after a tick so counts stay in sync.
@@ -511,27 +548,19 @@
 
 <div class="dashboard">
   <!-- ────────────────────────────────────────────────────
-       HEADER — thin app bar: logo+title left, SSH icon + settings right
+       HEADER — app bar with settings right
        ──────────────────────────────────────────────────── -->
-  <header class="dash-header" aria-label="Dashboard header">
-    <div class="header-title">
-      <span class="header-logo" aria-hidden="true">
-        <Icon name="terminal" size={20} />
-      </span>
-      <h1 class="header-name" data-view-focus>OpenCode TUI Tunnel</h1>
+  <div class="dash-header">
+    <div class="dash-header-left">
+      <Icon name="terminal" size={20} />
+      <h1>OpenCode TUI Tunnel</h1>
     </div>
-    <div class="header-actions">
-      <Button
-        variant="ghost"
-        size="md"
-        icon
-        aria-label="Open settings"
-        onclick={() => settingsOpen = true}
-      >
-        <Icon name="settings" size={20} />
+    <div class="dash-header-right">
+      <Button variant="ghost" onclick={() => settingsOpen = true} aria-label="Settings">
+        <Icon name="settings" size={18} />
       </Button>
     </div>
-  </header>
+  </div>
 
   <div class="install-banner-slot">
     <InstallBanner />
@@ -550,6 +579,8 @@
         {sshConnections}
         onLaunch={onLaunchBarLaunch}
         disabled={false}
+        opencodeVersion={settings.opencodeVersion}
+        bind:standalone
       />
     </section>
 
@@ -594,6 +625,7 @@
               onResume={resumeRecent}
               onRemove={deleteRecent}
               onKill={requestKill}
+              standaloneEnabled={false}
             />
           {/each}
         </div>
@@ -634,6 +666,9 @@
               onResume={resumeRecent}
               onRemove={deleteRecent}
               onKill={requestKill}
+              onStandaloneToggle={() => toggleItemStandalone(item)}
+              standaloneEnabled={settings.opencodeVersion === 'v2'}
+              standaloneActive={standaloneMap.get(getItemKey(item)) ?? getSettings().standaloneByDefault}
             />
           {/each}
         </div>
@@ -747,44 +782,21 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: var(--space-4);
-    margin-bottom: var(--space-5);
-    padding-bottom: var(--space-4);
-    border-bottom: 1px solid var(--border-subtle);
-  }
-
-  .header-title {
-    display: flex;
-    align-items: center;
+    padding: var(--space-3) var(--space-4);
     gap: var(--space-3);
-    min-width: 0;
   }
 
-  .header-logo {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    color: var(--accent-green);
-    filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent-green) 40%, transparent));
-    flex-shrink: 0;
-  }
-
-  .header-name {
-    margin: 0;
-    font-size: var(--font-size-lg);
-    font-weight: var(--font-weight-semibold);
-    color: var(--text-primary);
-    letter-spacing: -0.01em;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .header-actions {
+  .dash-header-left {
     display: flex;
     align-items: center;
-    gap: var(--space-1);
-    flex-shrink: 0;
+    gap: var(--space-2);
+  }
+
+  .dash-header-left h1 {
+    font-size: var(--font-size-lg);
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
   }
 
   /* ── Install banner slot ── */
@@ -951,6 +963,7 @@
       gap: var(--space-2);
       margin-bottom: var(--space-3);
       padding-bottom: var(--space-3);
+      flex-wrap: wrap;
     }
 
     .dash-flow {

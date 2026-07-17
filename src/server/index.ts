@@ -33,17 +33,14 @@ import {
 } from '../db/index.js';
 import { suggestPaths } from './fs-suggest.js';
 import { SessionSupervisor, type SessionInfo } from '../session/index.js';
+import { attachToTmuxSession, listAllTmuxSessions, type TmuxPtyHandle } from '../tmux/adapter.js';
 import {
-  attachToTmuxSession,
-  listAllTmuxSessions,
-  type TmuxPtyHandle,
-} from '../tmux/adapter.js';
-import { attachRemotePty, connectSshClient, listRemoteTunnelSessions, testSshConnection } from '../ssh/adapter.js';
-import {
-  checkSshfsAvailable,
-  cleanupStaleMounts,
-  cleanupAllMounts,
-} from '../sshfs/adapter.js';
+  attachRemotePty,
+  connectSshClient,
+  listRemoteTunnelSessions,
+  testSshConnection,
+} from '../ssh/adapter.js';
+import { checkSshfsAvailable, cleanupStaleMounts, cleanupAllMounts } from '../sshfs/adapter.js';
 import {
   configureWebPush,
   encodePushKeys,
@@ -192,6 +189,7 @@ function serializeSession(session: SessionInfo) {
     endedAt: session.endedAt?.toISOString(),
     backend: session.backend ?? 'tmux',
     sshConnectionId: session.sshConnectionId ?? null,
+    standalone: session.standalone ?? null,
   };
 }
 
@@ -614,7 +612,14 @@ function setupRoutes(
 
   app.post('/api/sessions', async (request, reply) => {
     const body = request.body as
-      | { cwd?: unknown; cols?: unknown; rows?: unknown; sshConnectionId?: unknown }
+      | {
+          cwd?: unknown;
+          cols?: unknown;
+          rows?: unknown;
+          sshConnectionId?: unknown;
+          opencodeVersion?: unknown;
+          standalone?: unknown;
+        }
       | undefined;
 
     if (!body || typeof body !== 'object') {
@@ -629,6 +634,17 @@ function setupRoutes(
       typeof body.sshConnectionId === 'string' && body.sshConnectionId.trim().length > 0
         ? body.sshConnectionId.trim()
         : undefined;
+
+    const opencodeVersion =
+      body.opencodeVersion === 'v1' || body.opencodeVersion === 'v2'
+        ? body.opencodeVersion
+        : undefined;
+
+    if (body.opencodeVersion !== undefined && opencodeVersion === undefined) {
+      return reply.code(400).send({ error: 'opencodeVersion must be "v1" or "v2"' });
+    }
+
+    const standalone = typeof body.standalone === 'boolean' ? body.standalone : undefined;
 
     const resolvedCwd = resolve(expandHomePath(body.cwd));
 
@@ -655,7 +671,14 @@ function setupRoutes(
     }
 
     try {
-      const session = await supervisor.launch(resolvedCwd, cols, rows, sshConnectionId);
+      const session = await supervisor.launch(
+        resolvedCwd,
+        cols,
+        rows,
+        sshConnectionId,
+        opencodeVersion,
+        standalone,
+      );
       upsertProjectHistory(db, resolvedCwd, source);
       return reply.code(201).send({
         session: serializeSession(session),
@@ -726,8 +749,7 @@ function setupRoutes(
     const authType = typeof body.authType === 'string' ? body.authType.trim() : '';
     const privateKeyPath =
       typeof body.privateKeyPath === 'string' ? body.privateKeyPath.trim() || null : null;
-    const passphrase =
-      typeof body.passphrase === 'string' ? body.passphrase.trim() || null : null;
+    const passphrase = typeof body.passphrase === 'string' ? body.passphrase.trim() || null : null;
     const opencodeProvider =
       typeof body.opencodeProvider === 'string' ? body.opencodeProvider.trim() : 'server';
     const opencodeCommand =
@@ -754,9 +776,9 @@ function setupRoutes(
       return reply.code(400).send({ error: 'opencodeProvider must be "local" or "server"' });
     }
 
-    const existingByName = db
-      .prepare('SELECT id FROM ssh_connections WHERE name = ?')
-      .get(name) as { id: string } | undefined;
+    const existingByName = db.prepare('SELECT id FROM ssh_connections WHERE name = ?').get(name) as
+      | { id: string }
+      | undefined;
     if (existingByName) {
       return reply.code(409).send({ error: 'SSH connection with this name already exists' });
     }
@@ -819,20 +841,24 @@ function setupRoutes(
     };
   });
 
-  app.get<{ Params: { id: string } }>('/api/ssh/connections/:id/tmux-sessions', async (request, reply) => {
-    const connection = getSshConnection(db, request.params.id);
-    if (!connection) {
-      return reply.code(404).send({ error: 'SSH connection not found' });
-    }
+  app.get<{ Params: { id: string } }>(
+    '/api/ssh/connections/:id/tmux-sessions',
+    async (request, reply) => {
+      const connection = getSshConnection(db, request.params.id);
+      if (!connection) {
+        return reply.code(404).send({ error: 'SSH connection not found' });
+      }
 
-    try {
-      const sessions = await listRemoteTunnelSessions(connection, config, null);
-      return { sessions };
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to list remote tmux sessions';
-      return reply.code(502).send({ error: message });
-    }
-  });
+      try {
+        const sessions = await listRemoteTunnelSessions(connection, config, null);
+        return { sessions };
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'Failed to list remote tmux sessions';
+        return reply.code(502).send({ error: message });
+      }
+    },
+  );
 
   app.post<{
     Params: { id: string; name: string };
@@ -883,7 +909,12 @@ function setupRoutes(
         ssh_connection_id: connection.id,
       });
 
-      logEvent(db, sessionId, 'session_attached_existing_tmux', { name, cols, rows, sshConnectionId: connection.id });
+      logEvent(db, sessionId, 'session_attached_existing_tmux', {
+        name,
+        cols,
+        rows,
+        sshConnectionId: connection.id,
+      });
       supervisor.get(sessionId);
 
       return reply.code(201).send({
@@ -891,7 +922,8 @@ function setupRoutes(
         streamUrl: `/api/sessions/${sessionId}/stream`,
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to attach to remote tmux session';
+      const message =
+        error instanceof Error ? error.message : 'Failed to attach to remote tmux session';
       const statusCode = /no server running|failed to connect|can't find session/i.test(message)
         ? 404
         : 500;
@@ -970,10 +1002,7 @@ function setupRoutes(
       }
       // Only update passphrase if a non-empty passphrase is explicitly provided.
       // An empty/missing passphrase in the request body means "don't change the existing passphrase".
-      if (
-        typeof body.passphrase === 'string' &&
-        body.passphrase.trim().length > 0
-      ) {
+      if (typeof body.passphrase === 'string' && body.passphrase.trim().length > 0) {
         updates.passphrase_encrypted = encryptPassphrase(body.passphrase.trim());
       }
       if (typeof body.opencodeProvider === 'string') {
@@ -1045,9 +1074,7 @@ function setupRoutes(
 
     const activeCount = countActiveSessionsForSshConnection(db, id);
     if (activeCount > 0) {
-      return reply
-        .code(409)
-        .send({ error: 'Cannot delete SSH connection with active sessions' });
+      return reply.code(409).send({ error: 'Cannot delete SSH connection with active sessions' });
     }
 
     deleteSshConnection(db, id);
@@ -1257,7 +1284,10 @@ function setupRoutes(
             // Buffer data during backpressure; drop oldest if buffer is full
             if (backpressureBufferBytes + raw.length > WS_BACKPRESSURE_BUFFER_SIZE) {
               // Drop oldest entries until we have room
-              while (backpressureBuffer.length > 0 && backpressureBufferBytes + raw.length > WS_BACKPRESSURE_BUFFER_SIZE) {
+              while (
+                backpressureBuffer.length > 0 &&
+                backpressureBufferBytes + raw.length > WS_BACKPRESSURE_BUFFER_SIZE
+              ) {
                 const oldest = backpressureBuffer.shift()!;
                 backpressureBufferBytes -= oldest.length;
               }
@@ -1415,12 +1445,19 @@ async function suggestRemotePaths(
     const needsQuoting =
       !dirPart.startsWith('~') &&
       (dirPart.includes(' ') || dirPart.includes('"') || dirPart.includes("'"));
-    const escapedDir = needsQuoting
-      ? `"${dirPart.replace(/"/g, '\\"')}"`
-      : dirPart;
+    const escapedDir = needsQuoting ? `"${dirPart.replace(/"/g, '\\"')}"` : dirPart;
     const remoteCmd = `bash -c 'find ${escapedDir} -mindepth 1 -maxdepth 1 -type d 2>/dev/null'`;
 
-    console.log('[suggestRemotePaths] partial=', partial, 'dirPart=', dirPart, 'prefixPart=', prefixPart, 'remoteCmd=', remoteCmd);
+    console.log(
+      '[suggestRemotePaths] partial=',
+      partial,
+      'dirPart=',
+      dirPart,
+      'prefixPart=',
+      prefixPart,
+      'remoteCmd=',
+      remoteCmd,
+    );
 
     client.exec(remoteCmd, (error, channel) => {
       if (error) {
@@ -1445,7 +1482,12 @@ async function suggestRemotePaths(
       });
 
       channel.on('close', () => {
-        console.log('[suggestRemotePaths] close. total stdout:', JSON.stringify(stdout), 'stderr:', JSON.stringify(stderr));
+        console.log(
+          '[suggestRemotePaths] close. total stdout:',
+          JSON.stringify(stdout),
+          'stderr:',
+          JSON.stringify(stderr),
+        );
         if (!stdout.trim()) {
           resolve([]);
           return;
