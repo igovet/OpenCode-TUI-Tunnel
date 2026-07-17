@@ -1,4 +1,4 @@
-import { refreshAllManagers } from './zoomStore.svelte';
+import { refreshAllManagersVisual, zoomState } from './zoomStore.svelte';
 import { get } from 'svelte/store';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
@@ -86,7 +86,7 @@ export class TerminalManager {
   terminal: Terminal;
   fitAddon: FitAddon;
   private customKeyEventHandler: ((event: KeyboardEvent) => boolean) | null = null;
-  private ws: WebSocket | null = null;
+  private _ws: WebSocket | null = null;
   private connectionStatus: TerminalConnectionStatus = 'disconnected';
   private connectionStatusListeners = new Set<(status: TerminalConnectionStatus) => void>();
   private hasConnectedOnce = false;
@@ -103,9 +103,8 @@ export class TerminalManager {
   private streamReady = false;
   private lastSentCols = 0;
   private lastSentRows = 0;
-  private _handleFocusRefresh?: () => void;
-  private _handleBlurRefresh?: () => void;
   private _handleVisibilityChange?: () => void;
+  private _handleFocusRefresh?: () => void;
   private _xtermTextarea: HTMLTextAreaElement | null = null;
   private _originalTextareaFocus: (() => void) | null = null;
   private _copyListener: ((event: ClipboardEvent) => void) | null = null;
@@ -125,14 +124,11 @@ export class TerminalManager {
   private inputTransform: InputTransformState | null = null;
   private _documentCopyListener: ((event: ClipboardEvent) => void) | null = null;
   private _onSelectionChangeDisposable: { dispose(): void } | null = null;
-  _canvasAddon?: import('@xterm/addon-canvas').CanvasAddon;
   private _scrollRAF: number | null = null;
   private pingInterval: number | null = null;
-  private reconnectDelay = 1000;
-  private reconnectAttempts = 0;
-  private static readonly MAX_RECONNECT_ATTEMPTS = 10;
-  private static readonly MAX_RECONNECT_DELAY_MS = 30000;
   private _disposed = false;
+  _webglAddon?: import('@xterm/addon-webgl').WebglAddon;
+  _canvasAddon?: import('@xterm/addon-canvas').CanvasAddon;
 
   constructor(element: HTMLElement, cols: number, rows: number) {
     this.element = element;
@@ -145,8 +141,9 @@ export class TerminalManager {
       altClickMovesCursor: false,
       macOptionIsMeta: true,
       rescaleOverlappingGlyphs: true,
-      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-      fontSize: 14,
+      fontFamily:
+        "'Ubuntu Mono', 'JetBrainsMono Nerd Font Mono', 'DejaVu Sans Mono', 'Liberation Mono', 'Menlo', 'Consolas', 'Courier New', monospace",
+      fontSize: zoomState.value,
       lineHeight: 1.0,
       letterSpacing: 0,
       fontWeight: 'normal',
@@ -325,8 +322,8 @@ export class TerminalManager {
       this.lastSentCols = size.cols;
       this.lastSentRows = size.rows;
 
-      if (this.ws?.readyState === WebSocket.OPEN) {
-        this.ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
+      if (this._ws?.readyState === WebSocket.OPEN) {
+        this._ws.send(JSON.stringify({ type: 'resize', cols: size.cols, rows: size.rows }));
       }
     });
   }
@@ -408,7 +405,6 @@ export class TerminalManager {
 
   async open(): Promise<void> {
     await document.fonts.ready;
-    await document.fonts.load('14px "JetBrains Mono"');
     this.terminal.open(this.element);
 
     const xtermViewport = this.element.querySelector<HTMLElement>('.xterm-viewport');
@@ -453,27 +449,40 @@ export class TerminalManager {
     this.terminal.loadAddon(unicode11Addon);
     this.terminal.unicode.activeVersion = '11';
 
-    // Use canvas renderer for reliable rendering
+    // Use WebGL renderer for GPU-accelerated rendering with solid box-drawing lines
     try {
-      const { CanvasAddon } = await import('@xterm/addon-canvas');
-      const canvasAddon = new CanvasAddon();
-      this.terminal.loadAddon(canvasAddon);
-      this._canvasAddon = canvasAddon;
+      const { WebglAddon } = await import('@xterm/addon-webgl');
+      const webglAddon = new WebglAddon();
+      this.terminal.loadAddon(webglAddon);
+      this._webglAddon = webglAddon;
     } catch (e) {
-      console.warn('CanvasAddon unavailable, using built-in DOM renderer:', e);
+      console.warn('WebGL addon unavailable, falling back to canvas renderer:', e);
+      // Fallback to canvas renderer
+      try {
+        const { CanvasAddon } = await import('@xterm/addon-canvas');
+        const canvasAddon = new CanvasAddon();
+        this.terminal.loadAddon(canvasAddon);
+        this._canvasAddon = canvasAddon;
+      } catch (e2) {
+        console.warn('Canvas addon also unavailable, using built-in DOM renderer:', e2);
+      }
     }
-
-    window.addEventListener('focus', (this._handleFocusRefresh = refreshAllManagers));
-
-    window.addEventListener('blur', (this._handleBlurRefresh = refreshAllManagers));
 
     const visibilityHandler = () => {
       if (document.visibilityState === 'visible') {
-        refreshAllManagers();
+        refreshAllManagersVisual();
       }
     };
     this._handleVisibilityChange = visibilityHandler;
     document.addEventListener('visibilitychange', visibilityHandler);
+
+    // Focus handler: only refresh the canvas renderer, no reconnect
+    this._handleFocusRefresh = () => {
+      if (!this._disposed) {
+        refreshAllManagersVisual();
+      }
+    };
+    window.addEventListener('focus', this._handleFocusRefresh);
 
     this.setupTouchScroll(this.element);
 
@@ -687,12 +696,14 @@ export class TerminalManager {
     (this as { touchEndListener?: EventListener }).touchEndListener = onTouchEnd as EventListener;
   }
 
-  connect(sessionId: string): void {
+  connect(sessionId: string, skipStatusReset?: boolean): void {
     this.exited = false;
     this.streamReady = false;
     this.pinnedToBottom = false;
     this.hasConnectedOnce = false;
-    this.setConnectionStatus('disconnected');
+    if (!skipStatusReset) {
+      this.setConnectionStatus('disconnected');
+    }
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
@@ -702,11 +713,19 @@ export class TerminalManager {
   }
 
   isConnected(): boolean {
-    return this.ws?.readyState === WebSocket.OPEN;
+    return this._ws?.readyState === WebSocket.OPEN;
   }
 
   hasEstablishedConnection(): boolean {
     return this.hasConnectedOnce;
+  }
+
+  get isConnectedOnce(): boolean {
+    return this.hasConnectedOnce;
+  }
+
+  get ws(): WebSocket | null {
+    return this._ws;
   }
 
   getConnectionStatus(): TerminalConnectionStatus {
@@ -723,20 +742,34 @@ export class TerminalManager {
   }
 
   reconnectIfDisconnected(): void {
-    if (!this.sessionId || this.exited) {
-      return;
+    if (this.exited || this._disposed || !this.sessionId) return;
+
+    // Force close any existing connection
+    if (this.ws) {
+      this.ws.onclose = null;
+      this.ws.onopen = null;
+      this.ws.onmessage = null;
+      this.ws.onerror = null;
+      try {
+        this.ws.close();
+      } catch {
+        /* intentional */
+      }
+      this._ws = null;
     }
 
-    if (this.ws?.readyState === WebSocket.OPEN || this.ws?.readyState === WebSocket.CONNECTING) {
-      return;
-    }
-
-    if (this.reconnectTimeout) {
+    // Clear any pending reconnect
+    if (this.reconnectTimeout !== null) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
 
-    this.attemptReconnect();
+    this.hasConnectedOnce = false;
+    this.streamReady = false;
+    this.setConnectionStatus('disconnected');
+
+    // Fresh connect — skip status reset since we just set it
+    this.connect(this.sessionId, true);
   }
 
   private setConnectionStatus(status: TerminalConnectionStatus): void {
@@ -750,32 +783,21 @@ export class TerminalManager {
     }
   }
 
-  private attemptReconnect(): void {
-    if (!this.sessionId || this.exited) {
-      return;
-    }
-
-    this.setConnectionStatus('reconnecting');
-    this.connectWs();
-  }
-
   private connectWs() {
     if (!this.sessionId) return;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/api/sessions/${this.sessionId}/stream?cols=${this.terminal.cols}&rows=${this.terminal.rows}`;
 
     const socket = new WebSocket(wsUrl);
-    this.ws = socket;
+    this._ws = socket;
     socket.binaryType = 'arraybuffer';
 
     socket.onopen = () => {
-      if (this.ws !== socket) {
+      if (this._ws !== socket) {
         return;
       }
       this.streamReady = false;
       this.hasConnectedOnce = true;
-      this.reconnectDelay = 1000;
-      this.reconnectAttempts = 0;
       this.setConnectionStatus('connected');
       socket.send(
         JSON.stringify({ type: 'hello', cols: this.terminal.cols, rows: this.terminal.rows }),
@@ -795,7 +817,7 @@ export class TerminalManager {
     };
 
     socket.onmessage = (event) => {
-      if (this.ws !== socket) {
+      if (this._ws !== socket) {
         return;
       }
 
@@ -859,11 +881,11 @@ export class TerminalManager {
     };
 
     socket.onclose = () => {
-      if (this.ws !== socket) {
+      if (this._ws !== socket) {
         return;
       }
 
-      this.ws = null;
+      this._ws = null;
 
       if (this.pingInterval) {
         window.clearInterval(this.pingInterval);
@@ -876,26 +898,12 @@ export class TerminalManager {
       }
 
       if (this.sessionId && !this.exited) {
-        if (this.reconnectAttempts >= TerminalManager.MAX_RECONNECT_ATTEMPTS) {
-          this.setConnectionStatus('disconnected');
-          return;
-        }
-        this.setConnectionStatus('disconnected');
-        const delay = this.reconnectDelay;
-        this.reconnectDelay = Math.min(
-          TerminalManager.MAX_RECONNECT_DELAY_MS,
-          this.reconnectDelay * 2,
-        );
-        this.reconnectAttempts++;
-        this.reconnectTimeout = window.setTimeout(() => {
-          this.reconnectTimeout = null;
-          this.attemptReconnect();
-        }, delay);
+        this.connect(this.sessionId, true);
       }
     };
 
     socket.onerror = (event) => {
-      if (this.ws !== socket) {
+      if (this._ws !== socket) {
         return;
       }
       console.error('WebSocket error for session', this.sessionId, event);
@@ -904,10 +912,8 @@ export class TerminalManager {
   }
 
   disconnect(): void {
-    this.sessionId = null;
+    this.hasConnectedOnce = false;
     this.streamReady = false;
-    this.pinnedToBottom = false;
-    this.clearInputTransform();
     this.setConnectionStatus('disconnected');
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
@@ -917,9 +923,11 @@ export class TerminalManager {
       window.clearInterval(this.pingInterval);
       this.pingInterval = null;
     }
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
+    if (this._ws) {
+      // Remove the onclose handler to prevent reconnect logic from firing
+      this._ws.onclose = null;
+      this._ws.close();
+      this._ws = null;
     }
   }
 
@@ -986,8 +994,8 @@ export class TerminalManager {
 
     this.clearAttentionFromUserInput(transformedData);
 
-    if (this.ws?.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify({ type: 'input', data: transformedData }));
+    if (this._ws?.readyState === WebSocket.OPEN) {
+      this._ws.send(JSON.stringify({ type: 'input', data: transformedData }));
       this.pinnedToBottom = true;
     }
   }
@@ -1315,14 +1323,12 @@ export class TerminalManager {
   dispose(): void {
     this._disposed = true;
 
-    if (this._handleFocusRefresh) {
-      window.removeEventListener('focus', this._handleFocusRefresh);
-    }
-    if (this._handleBlurRefresh) {
-      window.removeEventListener('blur', this._handleBlurRefresh);
-    }
     if (this._handleVisibilityChange) {
       document.removeEventListener('visibilitychange', this._handleVisibilityChange);
+    }
+
+    if (this._handleFocusRefresh) {
+      window.removeEventListener('focus', this._handleFocusRefresh);
     }
 
     this.cleanupTextareaFocusChangeRegistrations();
@@ -1418,6 +1424,11 @@ export class TerminalManager {
     this.connectionStatusListeners.clear();
 
     this.disconnect();
+
+    if (this._webglAddon) {
+      this._webglAddon.dispose();
+      this._webglAddon = undefined;
+    }
 
     if (this._canvasAddon) {
       this._canvasAddon.dispose();

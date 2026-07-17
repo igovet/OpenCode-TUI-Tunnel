@@ -19,6 +19,7 @@ export interface AppConfig {
   opencode: {
     command: string;
     defaultArgs: string[];
+    opencodeVersion: 'v1' | 'v2';
   };
   sessions: {
     backend: 'tmux';
@@ -107,6 +108,7 @@ export function getDefaultConfig(): AppConfig {
     opencode: {
       command: 'opencode',
       defaultArgs: [],
+      opencodeVersion: 'v1',
     },
     sessions: {
       backend: 'tmux',

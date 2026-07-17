@@ -8,6 +8,10 @@ export interface Settings {
   maxTerminals: number;
   /** Terminal layout direction. */
   terminalLayout: 'horizontal' | 'vertical';
+  /** opencode version to use: v1 (opencode) or v2 (opencode2) */
+  opencodeVersion: 'v1' | 'v2';
+  /** When enabled, all new sessions will launch in standalone mode by default. */
+  standaloneByDefault: boolean;
 }
 
 const SETTINGS_KEY = 'opencode-tui-settings';
@@ -20,6 +24,8 @@ const DEFAULTS: Settings = {
   scrollback: 1000,
   maxTerminals: 0,
   terminalLayout: 'horizontal',
+  opencodeVersion: 'v1',
+  standaloneByDefault: true,
 };
 
 function loadFromStorage(): Settings {

@@ -423,7 +423,8 @@ program
       if (platform === 'darwin') {
         installInstructions = 'brew install macfuse && brew install sshfs';
       } else {
-        installInstructions = 'sudo apt install sshfs  (Debian/Ubuntu) or sudo yum install fuse-sshfs  (RHEL/Fedora)';
+        installInstructions =
+          'sudo apt install sshfs  (Debian/Ubuntu) or sudo yum install fuse-sshfs  (RHEL/Fedora)';
       }
       checks.push({
         ok: true, // non-blocking: sshfs is optional
@@ -436,6 +437,15 @@ program
       ok: opencodePath !== null,
       message:
         opencodePath !== null ? `opencode found at ${opencodePath}` : 'opencode not found in PATH',
+    });
+
+    const opencode2Path = await commandPath('opencode2');
+    checks.push({
+      ok: true, // non-blocking — v2 is optional
+      message:
+        opencode2Path !== null
+          ? `opencode2 found at ${opencode2Path}`
+          : 'opencode2 not found in PATH (optional — needed for opencode v2)',
     });
 
     const configDir = getConfigDir();

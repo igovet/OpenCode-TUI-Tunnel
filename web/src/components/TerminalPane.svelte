@@ -1,8 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { get } from 'svelte/store';
-  import { refreshAllManagers } from '../lib/zoomStore.svelte';
-  import { type TerminalConnectionStatus } from '../lib/terminal';
   import type { TerminalManager } from '../lib/terminal';
   import { workspace, isTerminalTabEnded } from '../lib/workspace';
   import { activeTerminalWrite, activeTerminalRef } from '../lib/activeTerminal';
@@ -16,29 +14,29 @@
     isActive,
     showBorder = false,
     showChrome = true,
+    sleep = false,
   } = $props<{
     sessionId: string;
     isActive: boolean;
     showBorder?: boolean;
     showChrome?: boolean;
+    sleep?: boolean;
   }>();
 
   let container: HTMLElement;
   let manager = $state<TerminalManager | null>(null);
-  let terminalActive = $state(false);
   let containerReady = $state(false);
-  let connectionStatus = $state<TerminalConnectionStatus>('disconnected');
+  let connectionStatus = $state<'connected' | 'disconnected'>('disconnected');
+  let prevSleep = $state(false);
 
   let tab = $derived($workspace.tabs.find((t) => t.sessionId === sessionId));
   let tabEnded = $derived(tab ? isTerminalTabEnded(tab.status) : false);
+
   let showConnectionStatus = $derived(
-    containerReady &&
-      !tabEnded &&
-      (connectionStatus === 'disconnected' || connectionStatus === 'reconnecting'),
+    containerReady && !tabEnded && connectionStatus === 'disconnected',
   );
-  let connectionStatusText = $derived(
-    connectionStatus === 'reconnecting' ? 'Reconnection...' : 'Connection...',
-  );
+  let connectionStatusText = $derived('Connection...');
+
   let isSshTab = $derived(tab?.backend === 'ssh');
   let paneTitle = $derived(
     tab?.title || (tab?.cwd ? basename(tab.cwd) : '') || sessionId.slice(0, 8),
@@ -55,6 +53,8 @@
   let terminalAriaLabel = $derived(
     `Terminal session: ${paneCwd || paneTitle}, status ${paneStatusText}`,
   );
+
+  // Overlay removed — the terminal is blank/black when disconnected, which is sufficient.
 
   let resizeTimer: ReturnType<typeof setTimeout> | null = null;
   let ongoingResizeObserver: ResizeObserver | null = null;
@@ -83,15 +83,10 @@
   }
 
   $effect(() => {
-    if (isActive !== terminalActive) {
-      terminalActive = isActive;
-      if (isActive && manager && containerReady) {
-        manager.fitWhenReady();
-        if (!window.matchMedia('(pointer: coarse)').matches) {
-          manager.terminal.focus();
-        }
-        activeTerminalWrite.set((data) => manager!.onData(data)); activeTerminalRef.set(manager);
-      }
+    if (!manager || !containerReady) return;
+    if (isActive) {
+      activeTerminalWrite.set((data) => manager.onData(data));
+      activeTerminalRef.set(manager);
     }
   });
 
@@ -164,13 +159,6 @@
               localManager!.terminal.writeln('\r\n\x1b[33mSession ended\x1b[0m');
             }
 
-            if (isActive) {
-              if (!window.matchMedia('(pointer: coarse)').matches) {
-                localManager!.terminal.focus();
-              }
-              activeTerminalWrite.set((data) => localManager!.onData(data));
-              activeTerminalRef.set(localManager!);
-            }
           })();
         }
       });
@@ -210,19 +198,51 @@
         }
       }
       containerReady = false;
-      connectionStatus = 'disconnected';
     };
   });
 
   $effect(() => {
-    if (!manager) {
-      connectionStatus = 'disconnected';
-      return;
-    }
-
+    if (!manager) return;
     return manager.onConnectionStatusChange((status) => {
-      connectionStatus = status;
+      // Ignore brief disconnect during reconnect cycle.
+      // When waking from sleep, connect() closes old WS (fires 'disconnected')
+      // then opens new WS (fires 'connected'). We don't want to show the
+      // overlay during this brief transition.
+      if (status === 'disconnected' && connectionStatus === 'connected') {
+        return;
+      }
+      connectionStatus = status === 'connected' ? 'connected' : 'disconnected';
     });
+  });
+
+  // Connection status listener effect removed — no overlay to drive.
+
+  $effect(() => {
+    if (!manager || !containerReady) return;
+
+    // Only act when sleep state actually changes — not on every reactive re-run
+    // (e.g., when workspace.tabs changes on tab click)
+    if (sleep === prevSleep) return;
+    prevSleep = sleep;
+
+    if (sleep) {
+      // Disconnect when going to sleep
+      manager.disconnect();
+    } else if (!tabEnded) {
+      // Only connect if the terminal was ALREADY opened before sleep.
+      // The first-time open/fit/connect (display:none → visible) is handled
+      // by the initial ResizeObserver callback in the main setup effect.
+      // Connecting before the canvas is created causes DPI to be measured at 1x,
+      // resulting in crispy/fuzzy fonts even after a subsequent fit().
+        if (manager.isConnectedOnce && manager.ws?.readyState !== WebSocket.OPEN) {
+        // Immediately mark as connected to prevent overlay flash.
+        // connect() will close the old WS (firing 'disconnected') then open
+        // a new one (firing 'connected'). By setting 'connected' first, the
+        // guard in onConnectionStatusChange ignores the brief 'disconnected'.
+        connectionStatus = 'connected';
+        manager.connect(sessionId, true);
+      }
+    }
   });
 
   function handleClick(event: MouseEvent) {
@@ -232,7 +252,6 @@
 
     if (!isActive) {
       workspace.activateTab(sessionId);
-      refreshAllManagers();
     }
     // Only focus (and open virtual keyboard) on non-touch/desktop devices
     const isTouch = window.matchMedia('(pointer: coarse)').matches;
@@ -292,9 +311,7 @@
     {#if !containerReady}
       <div class="terminal-placeholder"></div>
     {/if}
-    {#if showConnectionStatus}
-      <div class="connection-status" aria-live="polite">{connectionStatusText}</div>
-    {/if}
+
     <div
       class="terminal-container"
       bind:this={container}
@@ -302,6 +319,12 @@
       role="application"
       aria-label={terminalAriaLabel}
     ></div>
+
+    {#if showConnectionStatus}
+      <div class="connection-status" aria-live="polite">
+        <span class="connection-status-text">{connectionStatusText}</span>
+      </div>
+    {/if}
   </div>
 </div>
 
@@ -419,24 +442,6 @@
     height: 100%;
   }
 
-  .connection-status {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 9;
-    pointer-events: none;
-    font-size: 12px;
-    line-height: 1;
-    background: color-mix(in srgb, var(--bg-terminal) 55%, transparent);
-    color: var(--text-secondary);
-    font-family: var(--font-mono);
-  }
-
   /* ── Active pane chrome accent (multi-pane mode) ──
      In multi-pane mode (showBorder=true), the active pane's chrome header
      gets a subtle blue tint, an accent bottom border, and the title in
@@ -448,6 +453,63 @@
 
   .pane-chrome.active .pane-title {
     color: var(--accent-blue);
+  }
+
+  /* ── Scrollbar styling for xterm viewport ── */
+  :global(.xterm-viewport) {
+    scrollbar-width: thin !important;
+  }
+
+  :global(.xterm-viewport::-webkit-scrollbar) {
+    width: 6px !important;
+  }
+
+  :global(.xterm-viewport::-webkit-scrollbar-track) {
+    background: transparent !important;
+  }
+
+  :global(.xterm-viewport::-webkit-scrollbar-thumb) {
+    background: var(--border-subtle) !important;
+    border-radius: 3px !important;
+  }
+
+  :global(.xterm-viewport::-webkit-scrollbar-thumb:hover) {
+    background: var(--text-muted) !important;
+  }
+
+  :global(.xterm-screen) {
+    margin-right: 0 !important;
+  }
+
+  .connection-status {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9;
+    pointer-events: none;
+    background: var(--bg-terminal);
+    color: var(--text-secondary);
+  }
+
+  .connection-status-text {
+    font-family: var(--font-mono);
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    opacity: 0.6;
+    image-rendering: pixelated;
+    animation: connection-pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes connection-pulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 0.3; }
   }
 
 </style>

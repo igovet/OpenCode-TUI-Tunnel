@@ -5,6 +5,66 @@ All notable changes to this project are documented here.
 ---
 
 <details open>
+<summary><strong>v0.3.3</strong> — 2026-07-17</summary>
+
+### 🎯 Features
+
+- Added opencode v2 (beta) support with configurable version selection (v1/v2)
+- Added `opencodeVersion` config option (`'v1'` / `'v2'`, default `'v1'`)
+- Added standalone mode support for opencode v2 sessions (`opencode2 --standalone`)
+- Added Normal/Standalone toggle in LaunchBar when opencode v2 is selected
+- Per-project standalone toggle in Projects section — each project can be launched in Normal or Standalone mode independently
+- Added "Standalone" badge on session cards for standalone sessions
+- Created V2-compatible TUI plugins (notify, 30fps) using `@opencode-ai/plugin/v2` API
+- V2 plugins auto-deploy to `.opencode/plugins/` when launching V2 sessions
+- Doctor command now checks for both `opencode` and `opencode2` in PATH
+- Moved opencode version switcher from dashboard header to Settings → OpenCode section
+- Added `standaloneByDefault` setting in Settings → OpenCode — when enabled, all new sessions launch in standalone mode by default
+
+### 🔧 Bug Fixes
+
+- Removed `configPathV1`/`configPathV2` settings — `OPENCODE_CONFIG` env var is not supported by opencode v2, config path customization removed entirely
+- Fixed tab page switching: off-page terminal panes now sleep (disconnect) to save resources, on-page panes wake (connect) on page switch
+- Fixed tab click within same page no longer causes unnecessary WebSocket reconnection
+- Fixed PWA mobile reconnect: replaced exponential-backoff reconnect with immediate fresh connect when app is restored from minimized state
+- Fixed desktop connection overlay not showing during fast WebSocket connections
+- Fixed terminal flicker/jump during connection — overlay now stays until xterm.js has fully rendered content at final size
+- Removed "Reconnection..." text — always shows "Connection..." since we always do a fresh connect
+- Made connection overlay text big and pixelated in terminal style with pulsing animation
+- Fixed terminal flicker/reconnect when clicking tabs within the same page — removed `refreshAllManagers()` calls from tab click handlers in SessionTabs, TerminalPane, and TerminalGrid
+- Fixed main setup effect re-running on tab activation — extracted `isActive` logic to a separate effect so manager is not disposed on tab switch
+- Fixed sleep effect re-running on unrelated state changes — added `prevSleep` guard to only act on actual sleep/wake transitions
+
+### 🎨 UI/UX
+
+- Dashboard header now shows opencode version (v1/v2) with beta/stable labels
+- Expandable install instructions in dashboard header (compact info button)
+- Standalone mode toggle in LaunchBar (visible only for V2)
+- "Standalone" warning badge on session rows
+- Per-project standalone toggle switch in Projects section (visible when opencode v2 is selected)
+- Connection overlay now shows big pixelated "CONNECTION..." text (24px monospace, uppercase, pulsing)
+- Connection overlay stays visible until terminal finishes rendering at final size (500ms debounce after last write, 3s fallback)
+- Added "Standalone by default" toggle in Settings → OpenCode section
+- Session rows now display in two-line layout on mobile (title on top, controls on bottom)
+
+### 📡 Infrastructure
+
+- Updated `POST /api/sessions` to accept optional `opencodeVersion` and `standalone` fields
+- Updated build script to bundle V2 plugins to `dist/assets/opencode2-plugins/`
+- All terminal panes now stay mounted in DOM across page switches (off-page panes hidden via CSS, not destroyed)
+- Switched from Canvas renderer (`@xterm/addon-canvas`) to WebGL renderer (`@xterm/addon-webgl`) as primary renderer for GPU-accelerated rendering with solid box-drawing lines
+- Removed dead CanvasAddon DPI resize trick (cols+1 resize workaround) from TerminalPane — WebGL handles DPR correctly natively
+- Removed DOM renderer CSS rules (`.xterm-rows`, `.xterm-row`) from xterm-global.css — these elements only exist in the DOM renderer fallback
+- Removed `configPathV1`/`configPathV2` from backend config, session launch, and API
+
+### 📚 Documentation
+
+- Added opencode v2 installation section to README
+- Updated install instructions with correct npm package names (`opencode-ai` for v1, `@opencode-ai/cli@next` for v2)
+
+</details>
+
+<details>
 <summary><strong>v0.3.2</strong> — 2026-07-12</summary>
 
 ### 🎯 Features

@@ -10,6 +10,7 @@ export interface SessionInfo {
   backend?: 'tmux' | 'ssh';
   sshConnectionId?: string;
   source?: string;
+  standalone?: boolean;
 }
 
 // Path autocomplete

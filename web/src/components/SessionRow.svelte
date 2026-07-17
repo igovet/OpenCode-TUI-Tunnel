@@ -16,6 +16,7 @@
     status?: string;
     lastUsedAt?: string | number | Date;
     sessionId?: string;
+    standalone?: boolean;
   }
 
   interface Props {
@@ -34,6 +35,18 @@
      * items. Terminates the running session.
      */
     onKill?: (item: UnifiedSessionItem) => void;
+    /**
+     * Toggle standalone mode for this item (recent projects only).
+     */
+    onStandaloneToggle?: (item: UnifiedSessionItem) => void;
+    /**
+     * Whether standalone mode is available (V2 selected).
+     */
+    standaloneEnabled?: boolean;
+    /**
+     * Whether standalone mode is active for this item.
+     */
+    standaloneActive?: boolean;
     [key: string]: unknown;
   }
 
@@ -44,6 +57,9 @@
     onResume,
     onRemove,
     onKill,
+    onStandaloneToggle,
+    standaloneEnabled = false,
+    standaloneActive = false,
     ...rest
   }: Props = $props();
 
@@ -161,75 +177,98 @@
   onkeydown={handleRowKeydown}
   {...rest}
 >
-  <!-- Status icon (far left) -->
-  <span class="status-area">
-    {#if item.kind === 'active'}
-      <StatusDot status={dotStatus} size="sm" />
-    {:else if item.kind === 'discovered'}
-      <Icon name="terminal" size={14} class="status-icon-discovered" aria-hidden="true" />
-    {:else}
-      <span class="status-dot-recent" aria-hidden="true"></span>
-    {/if}
-  </span>
+  <div class="row-inner">
+    <!-- Top line: status icon + title -->
+    <div class="row-title-line">
+      <span class="status-area">
+        {#if item.kind === 'active'}
+          <StatusDot status={dotStatus} size="sm" />
+        {:else if item.kind === 'discovered'}
+          <Icon name="terminal" size={14} class="status-icon-discovered" aria-hidden="true" />
+        {:else}
+          <span class="status-dot-recent" aria-hidden="true"></span>
+        {/if}
+      </span>
+      <span class="title" title={item.title}>{item.title}</span>
+    </div>
 
-  <!-- Title -->
-  <span class="title" title={item.title}>{item.title}</span>
+    <!-- Bottom line: all indicators and controls -->
+    <div class="row-controls-line">
+      <span class="path" title={item.path}>{item.path}</span>
 
-  <!-- Path -->
-  <span class="path" title={item.path}>{item.path}</span>
+      <Badge variant={badgeVariant}>
+        {badgeLabel}
+      </Badge>
 
-  <!-- Backend badge -->
-  <Badge variant={badgeVariant}>
-    {badgeLabel}
-  </Badge>
+      {#if item.kind === 'recent' && standaloneEnabled}
+        <button
+          type="button"
+          class="row-standalone-toggle"
+          class:active={standaloneActive}
+          onclick={(e) => { e.stopPropagation(); onStandaloneToggle?.(item); }}
+          role="switch"
+          aria-checked={standaloneActive}
+          aria-label="Standalone mode"
+          title={standaloneActive ? 'Standalone mode on' : 'Standalone mode off'}
+        >
+          <span class="row-standalone-track">
+            <span class="row-standalone-thumb"></span>
+          </span>
+          <span class="row-standalone-label">Standalone</span>
+        </button>
+      {/if}
 
-  <!-- Status text + relative time -->
-  <span class="status-text">{statusLabel}</span>
+      {#if item.standalone}
+        <Badge variant="warning">Standalone</Badge>
+      {/if}
 
-  <!-- Inline action area: [primary] [X] side by side at the right edge -->
-  <div class="row-actions">
-    <Button
-      variant="ghost"
-      size="sm"
-      onclick={handleAction}
-      aria-label={actionConfig?.label}
-    >
-      {#snippet icon_src()}
-        <Icon name={actionConfig?.icon ?? 'chevron-right'} size={14} />
-      {/snippet}
-      {actionConfig?.label}
-    </Button>
+      <span class="status-text">{statusLabel}</span>
 
-    {#if removeConfig}
-      <Button
-        variant="ghost"
-        size="sm"
-        icon
-        class="row-remove-btn"
-        aria-label={removeConfig.label}
-        title={removeConfig.label}
-        onclick={handleRemove}
-      >
-        <Icon name={removeConfig.icon} size={14} />
-      </Button>
-    {/if}
+      <div class="row-actions">
+        <Button
+          variant="ghost"
+          size="sm"
+          onclick={handleAction}
+          aria-label={actionConfig?.label}
+        >
+          {#snippet icon_src()}
+            <Icon name={actionConfig?.icon ?? 'chevron-right'} size={14} />
+          {/snippet}
+          {actionConfig?.label}
+        </Button>
+
+        {#if removeConfig}
+          <Button
+            variant="ghost"
+            size="sm"
+            icon
+            class="row-remove-btn"
+            aria-label={removeConfig.label}
+            title={removeConfig.label}
+            onclick={handleRemove}
+          >
+            <Icon name={removeConfig.icon} size={14} />
+          </Button>
+        {/if}
+      </div>
+    </div>
   </div>
 </div>
 
 <style>
   .session-row {
     display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-3) var(--space-md, var(--space-4));
-    border-radius: var(--radius-md);
-    background: var(--bg-surface);
-    border: 1px solid var(--border-muted);
+    flex-direction: column;
+    padding: var(--space-1-5) var(--space-3);
+    border-radius: var(--radius-sm);
     cursor: pointer;
     transition:
       background var(--transition-fast),
       border-color var(--transition-fast);
-    min-height: 44px;
+    min-height: 40px;
+    gap: var(--space-1);
+    background: var(--bg-surface);
+    border: 1px solid var(--border-muted);
   }
 
   @media (min-width: 769px) {
@@ -243,6 +282,27 @@
     background: var(--bg-elevated);
     border-color: var(--border-accent);
     box-shadow: 0 0 0 1px var(--border-accent);
+  }
+
+  .row-inner {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .row-title-line {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .row-controls-line {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+    min-width: 0;
   }
 
   /* ── Status area ── */
@@ -272,35 +332,33 @@
   /* ── Title ── */
 
   .title {
-    font-size: var(--font-size-base);
+    font-size: var(--font-size-sm);
+    font-weight: 500;
     color: var(--text-primary);
-    font-weight: var(--font-weight-medium);
-    max-width: 200px;
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 0 1 auto;
+    flex: 1;
     min-width: 0;
   }
 
   /* ── Path ── */
 
   .path {
-    font-size: var(--font-size-sm);
-    color: var(--text-secondary);
+    font-size: var(--font-size-xs);
+    color: var(--text-muted);
+    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 1 1 auto;
+    flex: 1;
     min-width: 0;
   }
 
   /* ── Status text ── */
 
   .status-text {
-    font-size: var(--font-size-sm);
+    font-size: var(--font-size-xs);
     color: var(--text-muted);
-    white-space: nowrap;
     flex-shrink: 0;
   }
 
@@ -326,50 +384,94 @@
 
   /* Coarse-pointer hover/focus suppression handled globally by theme.css */
 
-  /* ── Narrow phones (≤640px): tighten padding & gaps so every row fits the
-        viewport width without horizontal clipping. Title becomes shrinkable
-        (flex: 0 1 auto + min-width: 0) so it truncates before overflowing. ── */
+  /* ── Desktop (≥769px): single-line layout ── */
+  @media (min-width: 769px) {
+    .row-inner {
+      flex-direction: row;
+      align-items: center;
+      gap: var(--space-2);
+    }
+
+    .row-title-line {
+      flex: 0 1 auto;
+    }
+
+    .row-controls-line {
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: var(--space-2);
+    }
+  }
+
+  /* ── Narrow phones (≤640px): tighten padding ── */
   @media (max-width: 640px) {
     .session-row {
       padding: var(--space-2) var(--space-3);
-      gap: var(--space-2);
-    }
-    .title {
-      max-width: 45vw;
-    }
-    .row-actions {
-      gap: var(--space-1);
     }
   }
 
-  /* ── Mobile (≤768px) or coarse-pointer: hide path so session title fits
-        on narrow phone viewports. Path is secondary info; title is primary. ── */
-  @media (max-width: 768px) {
-    .path {
-      display: none;
-    }
+  /* ── Standalone toggle (recent items only) ── */
+
+  .row-standalone-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 2px 4px;
+    border-radius: var(--radius-sm);
+    transition: background 0.15s ease;
+    flex-shrink: 0;
   }
 
-  /* ── Ultra-narrow phones (≤340px): hide the backend badge so a row is
-        title + status-dot + action buttons only — guaranteed to fit even a
-        320px viewport with a long title. At 360px+ the badge (local/SSH) stays
-        visible because rows fit comfortably there. ── */
-  @media (max-width: 340px) {
-    .session-row {
-      padding: var(--space-2);
-      gap: var(--space-1-5, var(--space-1));
-      min-height: 40px;
-    }
-    .title {
-      max-width: 50vw;
-    }
-    /* Hide the backend badge (local/SSH/discovered) and status text on the
-       narrowest screens to keep each row a single line that fits. */
-    .session-row :global(.badge),
-    .status-text {
-      display: none;
-    }
+  .row-standalone-toggle:hover {
+    background: var(--bg-overlay);
   }
 
-  /* Focus suppression on touch — handled globally by theme.css */
-</style>
+  .row-standalone-toggle:focus-visible {
+    outline: 2px solid var(--border-accent);
+    outline-offset: 2px;
+  }
+
+  .row-standalone-track {
+    width: 28px;
+    height: 16px;
+    background: var(--bg-input);
+    border-radius: 8px;
+    position: relative;
+    transition: background 0.2s ease;
+  }
+
+  .row-standalone-toggle.active .row-standalone-track {
+    background: var(--border-accent);
+  }
+
+  .row-standalone-thumb {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    background: var(--text-muted);
+    border-radius: 50%;
+    transition: all 0.2s ease;
+  }
+
+  .row-standalone-toggle.active .row-standalone-thumb {
+    left: 14px;
+    background: var(--text-primary);
+  }
+
+  .row-standalone-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    white-space: nowrap;
+  }
+
+  .row-standalone-toggle.active .row-standalone-label {
+    color: var(--text-primary);
+  }
+
+  /* Focus suppression on touch — handled globally by theme.css */</style>

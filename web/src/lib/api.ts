@@ -77,11 +77,20 @@ export async function launchSession(
   cols: number,
   rows: number,
   sshConnectionId?: string,
+  opencodeVersion?: 'v1' | 'v2',
+  standalone?: boolean,
 ): Promise<{ session: SessionInfo; streamUrl: string }> {
   const res = await fetch('/api/sessions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cwd, cols, rows, sshConnectionId }),
+    body: JSON.stringify({
+      cwd,
+      cols,
+      rows,
+      sshConnectionId,
+      opencodeVersion,
+      standalone,
+    }),
   });
   if (!res.ok) {
     let body: { error?: string } = {};
@@ -108,7 +117,7 @@ export async function listSshConnections(): Promise<SshConnection[]> {
     fireErrorToast(err, 'Failed to list SSH connections');
     throw err;
   }
-  const data = await res.json() as { connections: SshConnection[] };
+  const data = (await res.json()) as { connections: SshConnection[] };
   return data.connections ?? [];
 }
 
@@ -142,7 +151,7 @@ export async function createSshConnection(body: {
     fireErrorToast(err, 'Failed to create SSH connection');
     throw err;
   }
-  const data = await res.json() as { connection: SshConnection };
+  const data = (await res.json()) as { connection: SshConnection };
   return data.connection;
 }
 
@@ -179,7 +188,7 @@ export async function updateSshConnection(
     fireErrorToast(err, 'Failed to update SSH connection');
     throw err;
   }
-  const data = await res.json() as { connection: SshConnection };
+  const data = (await res.json()) as { connection: SshConnection };
   return data.connection;
 }
 
@@ -215,7 +224,11 @@ export async function testSshConnection(id: string): Promise<{ success: boolean;
   return res.json() as Promise<{ success: boolean; error?: string }>;
 }
 
-export async function checkSshfsAvailability(): Promise<{ available: boolean; path?: string; platform: string }> {
+export async function checkSshfsAvailability(): Promise<{
+  available: boolean;
+  path?: string;
+  platform: string;
+}> {
   const res = await fetch('/api/system/sshfs');
   if (!res.ok) {
     const err = new Error('Failed to check SSHFS availability');
@@ -307,7 +320,9 @@ export async function attachTmuxSession(
 }
 
 // Remote tmux session discovery
-export async function getRemoteTmuxSessions(sshConnectionId: string): Promise<import('./types').TmuxDiscoverySession[]> {
+export async function getRemoteTmuxSessions(
+  sshConnectionId: string,
+): Promise<import('./types').TmuxDiscoverySession[]> {
   const res = await fetch(`/api/ssh/connections/${sshConnectionId}/tmux-sessions`);
   if (!res.ok) return [];
   const data = (await res.json()) as { sessions: import('./types').TmuxDiscoverySession[] };
@@ -321,11 +336,14 @@ export async function attachRemoteTmuxSession(
   cols?: number,
   rows?: number,
 ): Promise<{ sessionId: string; streamUrl: string } | null> {
-  const res = await fetch(`/api/ssh/connections/${sshConnectionId}/tmux-sessions/${encodeURIComponent(name)}/attach`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ cols, rows }),
-  });
+  const res = await fetch(
+    `/api/ssh/connections/${sshConnectionId}/tmux-sessions/${encodeURIComponent(name)}/attach`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cols, rows }),
+    },
+  );
   if (!res.ok) return null;
   return res.json();
 }

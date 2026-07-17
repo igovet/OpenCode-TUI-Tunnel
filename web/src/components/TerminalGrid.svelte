@@ -48,9 +48,9 @@
       const targetPage = Math.floor(tabIdx / maxPanes);
       if (targetPage !== $workspacePage && targetPage < totalPages) {
         workspacePage.set(targetPage);
+        refreshAllManagers(); // Only refresh when page actually changes
       }
       requestedWorkspacePage.set(null); // consume
-      refreshAllManagers();
     }
   });
 
@@ -72,6 +72,25 @@
     containerWidth < 900
       ? tabs.filter((t) => t.sessionId === activeSessionId)
       : tabs.slice($workspacePage * maxPanes, ($workspacePage + 1) * maxPanes),
+  );
+
+  // Check whether the tab at a given index is currently rendered in the grid.
+  // All tabs stay mounted (and their WebSockets stay connected); off-page
+  // panes are hidden with CSS so Svelte's keyed each does not destroy and
+  // recreate TerminalPane components on every page switch.
+  function isPaneVisible(index: number): boolean {
+    if (containerWidth < 900) {
+      return tabs[index]?.sessionId === activeSessionId;
+    }
+    const pageStart = $workspacePage * maxPanes;
+    const pageEnd = pageStart + maxPanes;
+    return index >= pageStart && index < pageEnd;
+  }
+
+  // Indices of tabs that are currently visible, used to map a tab index into
+  // the paneSizes / splitter arrays which only cover visible panes.
+  let visibleIndices = $derived(
+    tabs.map((_, i) => i).filter((i) => isPaneVisible(i)),
   );
 
   // ── Resizable pane sizes ──
@@ -97,26 +116,6 @@
     const firstTabIdx = newPage * maxPanes;
     if (firstTabIdx < tabs.length) {
       workspace.activateTab(tabs[firstTabIdx].sessionId);
-    }
-  }
-
-  // ── Active pane (derived from the workspace active tab) ──
-  // Clicking a pane calls workspace.activateTab inside TerminalPane, which
-  // flows back here through activeSessionId. activePaneIndex is therefore a
-  // derived view of which visible pane is active, not an independent source of
-  // truth — this keeps a single activation path.
-  let activePaneIndex = $derived(
-    Math.max(0, visiblePanes.findIndex((p) => p.sessionId === activeSessionId)),
-  );
-
-  function moveActivePane(direction: 1 | -1) {
-    if (visiblePanes.length <= 1) return;
-    let next = activePaneIndex + direction;
-    // Clamp at edges (no wrap) — terminal focus shouldn't jump unexpectedly.
-    if (next < 0) next = 0;
-    if (next >= visiblePanes.length) next = visiblePanes.length - 1;
-    if (next !== activePaneIndex) {
-      workspace.activateTab(visiblePanes[next].sessionId);
     }
   }
 
@@ -250,19 +249,22 @@
   aria-label="Terminal workspace"
 >
   <div class="terminal-grid" bind:clientWidth={containerWidth} bind:clientHeight={containerHeight} class:vertical={isVertical}>
-    {#each visiblePanes as pane, i (pane.sessionId)}
+    {#each tabs as pane, i (pane.sessionId)}
+      {@const visibleIndex = visibleIndices.indexOf(i)}
       <div
         class="pane_wrapper"
-        style="flex: 1 1 {(paneSizes[i] ?? 100 / (visiblePanes.length || 1))}%; {isVertical ? 'min-height: 0;' : 'min-width: 0;'}"
+        class:pane-hidden={visibleIndex === -1}
+        style="flex: 1 1 {(visibleIndex >= 0 ? paneSizes[visibleIndex] : 100 / (visiblePanes.length || 1))}%; {isVertical ? 'min-height: 0;' : 'min-width: 0;'}"
       >
         <TerminalPane
           sessionId={pane.sessionId}
           isActive={pane.sessionId === activeSessionId}
           showBorder={visiblePanes.length > 1}
           showChrome={visiblePanes.length > 1}
+          sleep={visibleIndex === -1}
         />
       </div>
-      {#if i < visiblePanes.length - 1}
+      {#if i < tabs.length - 1 && visibleIndex !== -1 && visibleIndices.includes(i + 1)}
         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
         <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
         <div
@@ -274,12 +276,12 @@
           tabindex="0"
           aria-label="Resize adjacent panes"
           aria-valuemin={MIN_PANE_PCT}
-          aria-valuemax={Math.round((paneSizes[i] ?? 0) + (paneSizes[i + 1] ?? 0) - MIN_PANE_PCT)}
-          aria-valuenow={Math.round(paneSizes[i] ?? 0)}
-          onpointerdown={(e) => onSplitterPointerDown(e, i)}
+          aria-valuemax={Math.round((paneSizes[visibleIndex] ?? 0) + (paneSizes[visibleIndex + 1] ?? 0) - MIN_PANE_PCT)}
+          aria-valuenow={Math.round(paneSizes[visibleIndex] ?? 0)}
+          onpointerdown={(e) => onSplitterPointerDown(e, visibleIndex)}
           onpointermove={onSplitterPointerMove}
           onpointerup={onSplitterPointerUp}
-          onkeydown={(e) => onSplitterKeydown(e, i)}
+          onkeydown={(e) => onSplitterKeydown(e, visibleIndex)}
         ></div>
       {/if}
     {/each}
@@ -334,6 +336,9 @@
     flex-direction: column;
     box-sizing: border-box;
     background: var(--bg-terminal);
+  }
+  .pane_wrapper.pane-hidden {
+    display: none;
   }
   /* In horizontal mode the pane_wrapper fills the full column height */
   .terminal-grid:not(.vertical) .pane_wrapper {

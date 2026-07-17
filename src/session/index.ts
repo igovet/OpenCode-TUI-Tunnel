@@ -27,10 +27,7 @@ import {
   listRemoteTunnelSessions,
   sendRemoteCommand,
 } from '../ssh/adapter.js';
-import {
-  mountRemoteDirectory,
-  unmountRemoteDirectory,
-} from '../sshfs/adapter.js';
+import { mountRemoteDirectory, unmountRemoteDirectory } from '../sshfs/adapter.js';
 
 export interface SessionInfo {
   id: string;
@@ -47,6 +44,7 @@ export interface SessionInfo {
   sshConnectionId?: string;
   source?: string;
   mountPath?: string;
+  standalone?: boolean;
 }
 
 class CountingPtyHandle implements TmuxPtyHandle {
@@ -140,6 +138,8 @@ export class SessionSupervisor {
     cols?: number,
     rows?: number,
     sshConnectionId?: string,
+    opencodeVersion?: 'v1' | 'v2',
+    standalone?: boolean,
   ): Promise<SessionInfo> {
     const activeCount = [...this.sessions.values()].filter((s) => s.status === 'running').length;
 
@@ -168,15 +168,27 @@ export class SessionSupervisor {
       isSshfsMode = sshConnection.opencode_provider === 'local';
     }
 
+    // Determine effective opencode version
+    const effectiveVersion = opencodeVersion ?? this.config.opencode.opencodeVersion;
+
     // Determine command: custom command for server mode, otherwise default
     let command: string;
-    if (isSsh && sshConnection && sshConnection.opencode_provider === 'server' && sshConnection.opencode_command) {
+    if (
+      isSsh &&
+      sshConnection &&
+      sshConnection.opencode_provider === 'server' &&
+      sshConnection.opencode_command
+    ) {
       command = sshConnection.opencode_command;
     } else {
-      command = buildCommand(this.config.opencode.command, this.config.opencode.defaultArgs);
+      if (effectiveVersion === 'v2') {
+        command = standalone ? 'opencode2 --standalone' : 'opencode2';
+      } else {
+        command = buildCommand(this.config.opencode.command, this.config.opencode.defaultArgs);
+      }
     }
 
-    const sessionBackend = isSshfsMode ? 'tmux' : (isSsh ? 'ssh' : 'tmux');
+    const sessionBackend = isSshfsMode ? 'tmux' : isSsh ? 'ssh' : 'tmux';
 
     const sessionInfo: SessionInfo = {
       id,
@@ -190,6 +202,7 @@ export class SessionSupervisor {
       backend: sessionBackend,
       sshConnectionId: sshConnectionId ?? undefined,
       source: sshConnection?.name ?? 'local',
+      standalone: standalone ?? undefined,
     };
 
     this.sessions.set(id, sessionInfo);
@@ -205,6 +218,7 @@ export class SessionSupervisor {
           tmuxName,
           mountPath,
           normalizeTunnelUrl(this.config.server.host, this.config.server.port),
+          effectiveVersion,
         );
         await sendCommand(tmuxName, command);
       } else if (isSsh && sshConnection) {
@@ -223,6 +237,7 @@ export class SessionSupervisor {
           tmuxName,
           cwd,
           normalizeTunnelUrl(this.config.server.host, this.config.server.port),
+          effectiveVersion,
         );
         await sendCommand(tmuxName, command);
       }
@@ -236,13 +251,21 @@ export class SessionSupervisor {
         status: 'running',
         cwd,
         command_json: JSON.stringify({
-          command: isSsh && sshConnection && sshConnection.opencode_provider === 'server' && sshConnection.opencode_command
-            ? sshConnection.opencode_command
-            : this.config.opencode.command,
-          args: isSsh && sshConnection && sshConnection.opencode_provider === 'server' && sshConnection.opencode_command
-            ? []
-            : this.config.opencode.defaultArgs,
-          providerMode: isSshfsMode ? 'local' : (isSsh ? 'server' : undefined),
+          command:
+            isSsh &&
+            sshConnection &&
+            sshConnection.opencode_provider === 'server' &&
+            sshConnection.opencode_command
+              ? sshConnection.opencode_command
+              : this.config.opencode.command,
+          args:
+            isSsh &&
+            sshConnection &&
+            sshConnection.opencode_provider === 'server' &&
+            sshConnection.opencode_command
+              ? []
+              : this.config.opencode.defaultArgs,
+          providerMode: isSshfsMode ? 'local' : isSsh ? 'server' : undefined,
           mountPath: mountPath ?? undefined,
         }),
         pid: null,
@@ -265,7 +288,7 @@ export class SessionSupervisor {
         rows: sessionRows,
         backend: sessionBackend,
         sshConnectionId: sshConnectionId ?? null,
-        providerMode: isSshfsMode ? 'local' : (isSsh ? 'server' : undefined),
+        providerMode: isSshfsMode ? 'local' : isSsh ? 'server' : undefined,
       });
 
       return sessionInfo;
@@ -355,10 +378,7 @@ export class SessionSupervisor {
         await killSession(current.tmuxName);
       }
     } catch (error) {
-      console.warn(
-        `[session] killSession(${current.tmuxName}) failed; continuing cleanup:`,
-        error,
-      );
+      console.warn(`[session] killSession(${current.tmuxName}) failed; continuing cleanup:`, error);
     }
 
     // Unmount SSHFS directory if this was an SSHFS session
@@ -400,7 +420,7 @@ export class SessionSupervisor {
     logEvent(this.db, id, 'session_terminated', {
       tmuxName: current.tmuxName,
       endedAt: endedAt.toISOString(),
-      providerMode: isSshfsMode ? 'local' : (isSshServerMode ? 'server' : undefined),
+      providerMode: isSshfsMode ? 'local' : isSshServerMode ? 'server' : undefined,
     });
   }
 
@@ -435,7 +455,13 @@ export class SessionSupervisor {
     let baseHandle: TmuxPtyHandle;
     try {
       if (isSsh && sshConnection) {
-        baseHandle = await attachRemotePty(sshConnection, this.config, current.tmuxName, cols, rows);
+        baseHandle = await attachRemotePty(
+          sshConnection,
+          this.config,
+          current.tmuxName,
+          cols,
+          rows,
+        );
       } else {
         baseHandle = attachPty(current.tmuxName, cols, rows);
       }

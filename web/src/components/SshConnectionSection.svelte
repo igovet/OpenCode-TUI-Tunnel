@@ -50,6 +50,7 @@
       toggle();
     }
   }
+  void [onTest, onDelete];
 </script>
 
 <div class="ssh-section" {...rest}>

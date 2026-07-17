@@ -13,6 +13,7 @@
   import Dialog from './ui/Dialog.svelte';
   import Button from './ui/Button.svelte';
   import Select from './ui/Select.svelte';
+  import Toggle from './ui/Toggle.svelte';
   import Icon from './ui/Icon.svelte';
 
   let { open, onClose }: { open: boolean; onClose: () => void } = $props();
@@ -196,15 +197,20 @@
     }
   }
 
+  function save() {
+    setSettings(settings);
+  }
+
   // ── Section navigation ──
 
-  type SectionId = 'notifications' | 'appearance' | 'terminal' | 'keyboard';
+  type SectionId = 'notifications' | 'appearance' | 'terminal' | 'keyboard' | 'opencode-config';
 
   const sections: { id: SectionId; label: string; icon: string }[] = [
     { id: 'notifications', label: 'Notifications', icon: 'bell' },
     { id: 'appearance', label: 'Appearance', icon: 'settings' },
     { id: 'terminal', label: 'Terminal', icon: 'terminal' },
     { id: 'keyboard', label: 'Keyboard', icon: 'copy' },
+    { id: 'opencode-config', label: 'OpenCode Config', icon: 'terminal' },
   ];
 
   let activeSection: SectionId = $state('notifications');
@@ -494,6 +500,40 @@
               {/each}
             </div>
           </div>
+
+        {:else if activeSection === 'opencode-config'}
+          <section class="settings-section">
+            <h3 class="section-title">
+              <Icon name="terminal" size={16} />
+              OpenCode
+            </h3>
+
+            <div class="setting-row">
+              <label class="setting-label">Version</label>
+              <div class="segment-control">
+                <button
+                  class="segment-option"
+                  class:active={settings.opencodeVersion === 'v1'}
+                  onclick={() => { settings.opencodeVersion = 'v1'; save(); }}
+                >v1</button>
+                <button
+                  class="segment-option"
+                  class:active={settings.opencodeVersion === 'v2'}
+                  onclick={() => { settings.opencodeVersion = 'v2'; save(); }}
+                >v2</button>
+              </div>
+            </div>
+
+            {#if settings.opencodeVersion === 'v2'}
+              <div class="setting-row">
+                <label class="setting-label">Standalone by default</label>
+                <Toggle
+                  checked={settings.standaloneByDefault}
+                  onchange={(e) => { settings.standaloneByDefault = e.currentTarget.checked; save(); }}
+                />
+              </div>
+            {/if}
+          </section>
         {/if}
       </div>
     </div>
@@ -754,6 +794,56 @@
     font-family: var(--font-ui);
     font-size: var(--font-size-sm, 0.8125rem);
     color: var(--text-secondary);
+  }
+
+  /* ── Config input (opencode config section) ── */
+
+  .setting-label {
+    font-family: var(--font-ui);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-medium, 500);
+    color: var(--text-primary);
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  /* ── Segment control (version switcher) ── */
+
+  .segment-control {
+    display: flex;
+    background: var(--bg-input);
+    border-radius: var(--radius-sm);
+    padding: 2px;
+    gap: 2px;
+  }
+
+  .segment-option {
+    padding: 4px 12px;
+    border: none;
+    background: transparent;
+    border-radius: calc(var(--radius-sm) - 2px);
+    cursor: pointer;
+    color: var(--text-muted);
+    font-family: var(--font-ui);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+    transition: all 0.15s ease;
+  }
+
+  .segment-option:hover {
+    color: var(--text-secondary);
+    background: var(--bg-overlay);
+  }
+
+  .segment-option.active {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+
+  .segment-option:focus-visible {
+    outline: 2px solid var(--border-accent);
+    outline-offset: 2px;
   }
 
   /* ── Responsive: stack nav on top on narrow screens ── */

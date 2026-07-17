@@ -111,7 +111,9 @@ When starting a new version cycle:
 - Removed legacy files: `web/src/components/LaunchForm.svelte`, `web/src/pages/Terminal.svelte`
 
 ### Design System (2026)
+
 Visual language defined in `web/src/styles/theme.css` using CSS custom properties:
+
 - **Dark dev-tool premium** palette: `--bg-base` `#05060a` (deep), `--bg-surface` `#0a0d12`, `--bg-elevated` `#11141b`, `--bg-overlay` `#181c26`, `--bg-terminal` `#080808`
 - **Glassmorphism contract**: every glass surface uses `backdrop-filter: blur(12-20px)` + 1px `rgba(255,255,255,0.06)` border + inset top highlight. Applied to cards, panes, modals, toasts, dropdowns, keybar.
 - **Typography**: Geist (UI/headings) + JetBrains Mono (terminal), loaded via `index.html` preconnect/preload (not CSS `@import`)
@@ -161,3 +163,7 @@ Visual language defined in `web/src/styles/theme.css` using CSS custom propertie
 - Node.js: `>=22.12.0`
 - Required tools: `tmux`, `opencode`
 - Native build support needed for modules like `better-sqlite3` and `node-pty`
+
+## codebase-memory Project Name
+
+When using `codebase-memory_*` tools, this project is named `home-igovet-.config-opencode`.

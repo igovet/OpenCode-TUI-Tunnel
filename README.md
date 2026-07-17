@@ -1,5 +1,24 @@
 # OpenCode TUI Tunnel
 
+<div align="center">
+  <br/>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/opencode_v2-beta-00ff88?style=for-the-badge&logo=openai&logoColor=white&labelColor=0d1117">
+    <img alt="opencode v2 beta" src="https://img.shields.io/badge/opencode_v2-beta-00ff88?style=for-the-badge&logo=openai&logoColor=white&labelColor=ffffff">
+  </picture>
+  <br/>
+  <br/>
+  <p>
+    <strong>🚀 opencode v2 (beta) is now supported!</strong><br/>
+    This project works with <strong>both</strong> opencode v1 and the new opencode v2.<br/>
+    Switch between versions directly from Settings → OpenCode — no config files needed.
+  </p>
+  <p>
+    <a href="https://v2.opencode.ai"><strong>📖 Learn more about opencode v2 →</strong></a>
+  </p>
+  <br/>
+</div>
+
 <p align="center"><strong>Run your <code>opencode</code> terminal sessions anywhere — in a clean browser UI, on desktop or mobile.</strong></p>
 
 <p align="center">
@@ -26,6 +45,7 @@ It exists to make terminal-first workflows easier to access anywhere: local lapt
 - 📱 **Mobile-adaptive interface** — Floating glass keybar with 44px touch targets, adaptive layouts, reduced-motion and reduced-transparency fallbacks
 - 📲 **PWA with install CTA** — Full PWA support with install banner (consuming `beforeinstallprompt`), iOS instructions, update toast with reload, offline-ready
 - 🧠 **Multi-session tmux management** — Launch, attach, kill, and organize multiple concurrent terminal sessions backed by tmux
+- ⚙️ **OpenCode version selector** — Switch between opencode v1 and v2 in Settings → OpenCode
 
 ## 🎯 Use Cases
 
@@ -67,7 +87,8 @@ See [CHANGELOG.md](./CHANGELOG.md) for version history.
 
 - Node.js >= 22.12.0
 - tmux
-- opencode
+- **opencode** (v1) — required for opencode v1 sessions (`npm install -g opencode-ai`)
+- **opencode2** (v2, optional) — required for opencode v2 sessions (beta) (`npm install -g @opencode-ai/cli@next`)
 
 ## Installation
 
@@ -150,6 +171,48 @@ opencode-tui-tunnel doctor
 - **`tmux: command not found`**
   - Install `tmux` via your package manager and verify the binary is available in `PATH`.
   - Check your environment with: `opencode-tui-tunnel doctor`.
+
+## opencode v2 (beta)
+
+This project supports both opencode v1 and the new opencode v2 (beta). You can choose which version to use directly from the dashboard header.
+
+### Installing opencode v2
+
+opencode v2 is available as the `@next` tag on npm:
+
+```bash
+# Install globally
+npm install -g @opencode-ai/cli@next
+
+# Or with other package managers
+bun install -g @opencode-ai/cli@next
+pnpm install -g @opencode-ai/cli@next
+yarn global add @opencode-ai/cli@next
+```
+
+### Standalone mode
+
+opencode v2 supports a **standalone mode** that runs without a project context:
+
+```bash
+opencode2 --standalone
+```
+
+Standalone sessions are identified with a **standalone badge** in the session list and workspace tabs, making them easy to distinguish from project-bound sessions.
+
+### Documentation
+
+- opencode v1 docs: [https://opencode.ai/docs](https://opencode.ai/docs)
+- opencode v2 docs: [https://v2.opencode.ai](https://v2.opencode.ai)
+
+### Switching versions
+
+1. Open the **Settings** panel in the web UI
+2. Go to the **OpenCode** section
+3. Select **v1** or **v2** from the version selector
+4. New sessions will use the selected version
+
+The doctor command (`opencode-tui-tunnel doctor`) will check for both `opencode` and `opencode2` in your PATH.
 
 ## Usage
 
@@ -479,7 +542,8 @@ Run environment diagnostics.
 
 - Node.js version (required: `>=22.12.0`)
 - `tmux` availability
-- `opencode` availability in `PATH`
+- `opencode` (v1) availability in `PATH`
+- `opencode2` (v2, optional) availability in `PATH`
 - Config directory availability/writability
 - Packaged web assets (`dist/web/index.html`)
 

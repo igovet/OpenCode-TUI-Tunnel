@@ -10,9 +10,7 @@
 .xterm,
 .xterm-screen,
 .xterm-viewport,
-.xterm-scrollable-element,
-.xterm-rows,
-.xterm-row {
+.xterm-scrollable-element {
   padding: 0 !important;
   margin: 0 !important;
   border: none !important;
@@ -42,18 +40,13 @@
   width: 0 !important;
 }
 
-.xterm-rows,
-.xterm-row {
-  line-height: normal !important;
-  padding: 0 !important;
-  margin: 0 !important;
-}
-
 .terminal-pane .xterm {
   width: 100%;
   height: 100%;
   font-variant-ligatures: none !important;
-  font-feature-settings: "liga" 0, "calt" 0 !important;
+  font-feature-settings:
+    'liga' 0,
+    'calt' 0 !important;
   padding: 0;
   margin: 0;
 }

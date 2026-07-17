@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -31,12 +31,8 @@ function getTmuxExecEnv(): NodeJS.ProcessEnv {
 
   // Filter out SSH variables that cause opencode to enable mouse tracking
   // when connecting via SSH. Local sessions should not have these.
-  const {
-    SSH_CONNECTION,
-    SSH_CLIENT,
-    SSH_TTY,
-    ...envWithoutSsh
-  } = process.env;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { SSH_CONNECTION, SSH_CLIENT, SSH_TTY, ...envWithoutSsh } = process.env;
 
   return {
     ...envWithoutSsh,
@@ -72,6 +68,48 @@ function resolveOpencodeTuiConfigPath(): string | null {
   }
 
   return null;
+}
+
+function resolveV2PluginsDir(): string | null {
+  const bundledPath = fileURLToPath(new URL('../assets/opencode2-plugins', import.meta.url));
+  if (existsSync(bundledPath)) {
+    return bundledPath;
+  }
+
+  const projectAssetPath = resolve(moduleDir, '../../assets/opencode2-plugins');
+  if (existsSync(projectAssetPath)) {
+    return projectAssetPath;
+  }
+
+  const sourcePath = resolve(moduleDir, '../../src/assets/opencode2-plugins');
+  if (existsSync(sourcePath)) {
+    return sourcePath;
+  }
+
+  return null;
+}
+
+export async function deployV2Plugins(cwd: string): Promise<void> {
+  const pluginsDir = resolveV2PluginsDir();
+  if (!pluginsDir) {
+    console.warn('[tmux] V2 plugins directory not found; skipping deploy');
+    return;
+  }
+
+  const targetDir = join(cwd, '.opencode', 'plugins');
+  mkdirSync(targetDir, { recursive: true });
+
+  const pluginFiles = [
+    'opencode2-tui-notify.js',
+    'opencode2-tui-30fps.js',
+    'opencode2-tui-config.json',
+  ];
+  for (const file of pluginFiles) {
+    const src = resolve(pluginsDir, file);
+    if (existsSync(src)) {
+      copyFileSync(src, join(targetDir, file));
+    }
+  }
 }
 
 export interface TmuxSession {
@@ -220,11 +258,23 @@ export async function listAllTmuxSessions(): Promise<TmuxSessionInfo[]> {
   }
 }
 
-export async function createSession(name: string, cwd: string, tunnelUrl?: string): Promise<void> {
+export async function createSession(
+  name: string,
+  cwd: string,
+  tunnelUrl?: string,
+  opencodeVersion?: 'v1' | 'v2',
+): Promise<void> {
   const tmuxArgs = ['new-session', '-d', '-s', name, '-c', cwd];
-  const opencodeTuiConfigPath = resolveOpencodeTuiConfigPath();
-  if (opencodeTuiConfigPath) {
-    tmuxArgs.push('-e', `OPENCODE_TUI_CONFIG=${opencodeTuiConfigPath}`);
+
+  if (opencodeVersion === 'v2') {
+    // V2: deploy plugins to .opencode/plugins/ and do NOT set OPENCODE_TUI_CONFIG
+    await deployV2Plugins(cwd);
+  } else {
+    // V1 or default: set OPENCODE_TUI_CONFIG env var
+    const opencodeTuiConfigPath = resolveOpencodeTuiConfigPath();
+    if (opencodeTuiConfigPath) {
+      tmuxArgs.push('-e', `OPENCODE_TUI_CONFIG=${opencodeTuiConfigPath}`);
+    }
   }
 
   if (tunnelUrl) {

@@ -31,7 +31,8 @@ export const terminalManagers = new Set<TerminalManager>();
 
 export function registerManager(manager: TerminalManager) {
   terminalManagers.add(manager);
-  manager.setFontSize(zoomState.value);
+  // Don't setFontSize here — terminal may not be open yet
+  // The canvas addon needs the terminal to be open to measure DPI correctly
   return () => terminalManagers.delete(manager);
 }
 
@@ -45,6 +46,7 @@ export function setZoom(size: number) {
 }
 
 let refreshRAF: number | null = null;
+let refreshVisualRAF: number | null = null;
 
 export function refreshAllManagers() {
   if (refreshRAF !== null) {
@@ -52,6 +54,19 @@ export function refreshAllManagers() {
   }
   refreshRAF = requestAnimationFrame(() => {
     refreshRAF = null;
+    for (const manager of terminalManagers) {
+      manager.terminal.refresh(0, manager.terminal.rows - 1);
+      manager.reconnectIfDisconnected();
+    }
+  });
+}
+
+export function refreshAllManagersVisual() {
+  if (refreshVisualRAF !== null) {
+    return;
+  }
+  refreshVisualRAF = requestAnimationFrame(() => {
+    refreshVisualRAF = null;
     for (const manager of terminalManagers) {
       manager.terminal.refresh(0, manager.terminal.rows - 1);
     }
