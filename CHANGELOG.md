@@ -5,6 +5,23 @@ All notable changes to this project are documented here.
 ---
 
 <details open>
+<summary><strong>v0.3.4</strong> — 2026-07-18</summary>
+
+### 🔧 Bug Fixes
+
+- Fixed standalone badge showing on new sessions when standalone was never explicitly enabled — changed `standaloneByDefault` default from `true` to `false` in settings
+- Standalone badge no longer shows for v1 sessions — badge condition now checks `standaloneEnabled` prop, which is only true when opencode v2 is selected
+- WebSocket reconnect now works during session initialization — if the connection drops before the server sends the `'ready'` message, the client retries up to 5 times with exponential backoff instead of immediately showing "Session ended"
+
+### 📡 Infrastructure
+
+- Added WebSocket auto-reconnect with exponential backoff (1s, 2s, 4s, 8s, 16s) and max 5 retries — replaces old infinite immediate reconnect
+- Added `'reconnecting'` status emit during backoff
+- After 5 retries exhausted, shows "Session died (connection lost)" in yellow terminal text
+
+</details>
+
+<details>
 <summary><strong>v0.3.3</strong> — 2026-07-17</summary>
 
 ### 🎯 Features
