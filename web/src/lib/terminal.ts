@@ -94,6 +94,10 @@ export class TerminalManager {
   private sessionId: string | null = null;
   element: HTMLElement;
   private reconnectTimeout: number | null = null;
+  private reconnectAttempts = 0;
+  private finalReconnectScheduled = false;
+  private static readonly MAX_RETRIES = 5;
+  private static readonly BASE_BACKOFF_MS = 1000;
   private fitTimer: number | null = null;
   private fitVisibilityTimer: number | null = null;
   private touchElement: HTMLElement | null = null;
@@ -696,8 +700,41 @@ export class TerminalManager {
     (this as { touchEndListener?: EventListener }).touchEndListener = onTouchEnd as EventListener;
   }
 
+  private scheduleReconnect(): void {
+    this.reconnectAttempts++;
+    if (this.reconnectAttempts > TerminalManager.MAX_RETRIES) {
+      this.markSessionEnded('Session died (connection lost)', 1);
+      this.reconnectAttempts = 0;
+      if (!this.finalReconnectScheduled) {
+        this.finalReconnectScheduled = true;
+        this.reconnectTimeout = window.setTimeout(() => {
+          if (this.sessionId) {
+            this.connect(this.sessionId, true);
+          }
+        }, 30000);
+      }
+      return;
+    }
+    const delay =
+      this.reconnectAttempts === 1
+        ? 0
+        : Math.min(
+            TerminalManager.BASE_BACKOFF_MS * Math.pow(2, this.reconnectAttempts - 2),
+            16000,
+          );
+    // Emit 'reconnecting' status — socket.onopen will reset to 'connected' on success
+    this.setConnectionStatus('reconnecting');
+    this.reconnectTimeout = window.setTimeout(() => {
+      if (this.sessionId) {
+        this.connect(this.sessionId, true);
+      }
+    }, delay);
+  }
+
   connect(sessionId: string, skipStatusReset?: boolean): void {
+    this.reconnectAttempts = 0;
     this.exited = false;
+    this.finalReconnectScheduled = false;
     this.streamReady = false;
     this.pinnedToBottom = false;
     this.hasConnectedOnce = false;
@@ -798,6 +835,7 @@ export class TerminalManager {
       }
       this.streamReady = false;
       this.hasConnectedOnce = true;
+      this.reconnectAttempts = 0;
       this.setConnectionStatus('connected');
       socket.send(
         JSON.stringify({ type: 'hello', cols: this.terminal.cols, rows: this.terminal.rows }),
@@ -853,15 +891,14 @@ export class TerminalManager {
               typed.status === 'failed' ||
               typed.status === 'interrupted')
           ) {
-            this.markSessionEnded(`Session ended (${typed.status})`, 1);
+            this.terminal.writeln(`\r\n\x1b[33mSession ended (${typed.status})\x1b[0m`);
+            socket.close();
           }
           return;
         }
 
         if (typed.type === 'exit') {
-          this.exited = true;
           this.terminal.writeln(`\r\n\x1b[33mSession ended (code ${typed.exitCode})\x1b[0m`);
-          this.sessionId = null;
           if (this.reconnectTimeout) {
             clearTimeout(this.reconnectTimeout);
             this.reconnectTimeout = null;
@@ -871,7 +908,6 @@ export class TerminalManager {
         } else if (typed.type === 'error') {
           this.terminal.writeln(`\x1b[31mError: ${typed.message ?? 'unknown error'}\x1b[0m`);
           if (!this.streamReady) {
-            this.markSessionEnded('Session ended', 1);
             socket.close();
           }
         }
@@ -893,12 +929,12 @@ export class TerminalManager {
       }
 
       if (this.sessionId && !this.streamReady && !this.exited) {
-        this.markSessionEnded('Session ended', 1);
+        this.scheduleReconnect();
         return;
       }
 
       if (this.sessionId && !this.exited) {
-        this.connect(this.sessionId, true);
+        this.scheduleReconnect();
       }
     };
 
@@ -1180,6 +1216,7 @@ export class TerminalManager {
     }
 
     this.exited = true;
+    this.reconnectAttempts = 0;
     this.terminal.writeln(`\r\n\x1b[33m${message}\x1b[0m`);
     this.sessionId = null;
     this.setConnectionStatus('disconnected');

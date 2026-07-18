@@ -50,6 +50,7 @@
       toggle();
     }
   }
+  // svelte-ignore state_referenced_locally
   void [onTest, onDelete];
 </script>
 

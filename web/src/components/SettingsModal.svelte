@@ -509,7 +509,7 @@
             </h3>
 
             <div class="setting-row">
-              <label class="setting-label">Version</label>
+              <span class="setting-label">Version</span>
               <div class="segment-control">
                 <button
                   class="segment-option"
@@ -526,7 +526,7 @@
 
             {#if settings.opencodeVersion === 'v2'}
               <div class="setting-row">
-                <label class="setting-label">Standalone by default</label>
+                <span class="setting-label">Standalone by default</span>
                 <Toggle
                   checked={settings.standaloneByDefault}
                   onchange={(e) => { settings.standaloneByDefault = e.currentTarget.checked; save(); }}

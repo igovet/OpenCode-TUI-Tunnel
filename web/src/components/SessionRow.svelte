@@ -218,7 +218,7 @@
         </button>
       {/if}
 
-      {#if item.standalone}
+      {#if item.standalone && standaloneEnabled}
         <Badge variant="warning">Standalone</Badge>
       {/if}
 

@@ -25,7 +25,7 @@ const DEFAULTS: Settings = {
   maxTerminals: 0,
   terminalLayout: 'horizontal',
   opencodeVersion: 'v1',
-  standaloneByDefault: true,
+  standaloneByDefault: false,
 };
 
 function loadFromStorage(): Settings {
