@@ -22,12 +22,13 @@
    * Svelte 5 runes. Zero hardcoded hex.
    */
 
+  import { tick } from 'svelte';
   import { workspace, type WorkspaceTab } from '../lib/workspace';
   import { get } from 'svelte/store';
   import { requestedWorkspacePage } from '../lib/workspacePage';
   import { workspaceMaxPanes } from '../lib/workspaceDisplay';
   import { deleteSession } from '../lib/api';
-  import { refreshAllManagers } from '../lib/zoomStore.svelte';
+  import { refreshAllManagers, refreshAllManagersVisual, fitAllManagersVisual } from '../lib/zoomStore.svelte';
   import Icon from './ui/Icon.svelte';
   import StatusDot from './ui/StatusDot.svelte';
   import Button from './ui/Button.svelte';
@@ -296,7 +297,16 @@
       let target = dropIndex;
       if (target > index) target -= 1;
       if (target >= 0 && target < $workspace.tabs.length && target !== index) {
+        console.log('[SessionTabs] moveTab from', index, 'to', target);
         workspace.moveTab(index, target);
+        // Wait for Svelte to update the DOM after moveTab(), then fit AND
+        // refresh all visible terminals. fit() adjusts terminal dimensions
+        // to new container size. refresh() re-renders the WebGL canvas.
+        tick().then(() => {
+          console.log('[SessionTabs] tick() after moveTab, calling fit+refresh');
+          fitAllManagersVisual();
+          refreshAllManagersVisual();
+        });
       }
     }
     dragIndex = null;

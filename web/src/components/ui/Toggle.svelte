@@ -6,6 +6,8 @@
     label?: string;
     /** Disabled state */
     disabled?: boolean;
+    /** Change handler — called with the new checked value when toggled */
+    onchange?: (checked: boolean) => void;
     [key: string]: unknown;
   }
 
@@ -13,12 +15,14 @@
     checked = false,
     label,
     disabled = false,
+    onchange,
     ...rest
   }: Props = $props();
 
   function toggle() {
     if (!disabled) {
       checked = !checked;
+      onchange?.(checked);
     }
   }
 

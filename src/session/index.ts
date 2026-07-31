@@ -120,6 +120,7 @@ function mapRecordToInfo(record: SessionRecord): SessionInfo {
     clientCount: 0,
     backend: record.backend,
     sshConnectionId: record.ssh_connection_id ?? undefined,
+    standalone: record.standalone ? true : undefined,
   };
 }
 
@@ -279,6 +280,7 @@ export class SessionSupervisor {
         reconnectable: 1,
         interrupted_reason: null,
         ssh_connection_id: sshConnectionId ?? null,
+        standalone: standalone ? 1 : 0,
       });
 
       logEvent(this.db, id, 'session_started', {
@@ -513,6 +515,7 @@ export class SessionSupervisor {
             clientCount: 0,
             backend: 'ssh',
             sshConnectionId: record.ssh_connection_id,
+            standalone: record.standalone ? true : undefined,
           });
 
           logEvent(this.db, record.id, 'session_interrupted', {
@@ -569,6 +572,7 @@ export class SessionSupervisor {
         cols: record.cols,
         rows: record.rows,
         clientCount: 0,
+        standalone: record.standalone ? true : undefined,
       });
 
       logEvent(this.db, record.id, 'session_interrupted', {

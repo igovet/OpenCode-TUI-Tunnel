@@ -34,6 +34,8 @@
   import Dialog from '../components/ui/Dialog.svelte';
   import InstallBanner from '../components/InstallBanner.svelte';
 
+  const STANDALONE_MAP_KEY = 'opencode-tui-standalone-map';
+
   // ── Props (unchanged contract with App.svelte) ──
   let { onopenSession } = $props<{ onopenSession: (tab: WorkspaceTab) => void }>();
 
@@ -51,16 +53,31 @@
   let backendId = $state<string>('local');
   let standalone = $state(getSettings().standaloneByDefault);
 
-  // Sync LaunchBar standalone toggle with settings
-  $effect(() => {
-    standalone = getSettings().standaloneByDefault;
-  });
-
   // ── Per-project standalone state (keyed by path+sshConnectionId) ──
-  let standaloneMap = $state(new Map<string, boolean>());
+  function loadStandaloneMap(): Map<string, boolean> {
+    try {
+      const stored = localStorage.getItem(STANDALONE_MAP_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as Array<[string, boolean]>;
+        return new Map(parsed);
+      }
+    } catch {
+      // intentional — ignore parse errors
+    }
+    return new Map();
+  }
+  let standaloneMap = $state(loadStandaloneMap());
 
   function getItemKey(item: UnifiedSessionItem): string {
     return item.path + '::' + (item.sshConnectionId ?? 'local');
+  }
+
+  function saveStandaloneMap(map: Map<string, boolean>): void {
+    try {
+      localStorage.setItem(STANDALONE_MAP_KEY, JSON.stringify(Array.from(map.entries())));
+    } catch {
+      // intentional — ignore storage errors
+    }
   }
 
   function toggleItemStandalone(item: UnifiedSessionItem) {
@@ -68,6 +85,7 @@
     standaloneMap.set(key, !(standaloneMap.get(key) ?? getSettings().standaloneByDefault));
     // Trigger reactivity by replacing the Map
     standaloneMap = new Map(standaloneMap);
+    saveStandaloneMap(standaloneMap);
   }
 
   // ── Reactive settings read (settings are stored in $lib/settings.svelte.ts) ──
@@ -386,6 +404,10 @@
     const sshId = backend === 'local' ? undefined : backend;
     const settings = getSettings();
     const effectiveStandalone = standalone ?? settings.standaloneByDefault;
+    // Persist the user's toggle choice to settings so it survives page reload
+    if (standalone !== settings.standaloneByDefault) {
+      setSettings({ ...settings, standaloneByDefault: standalone });
+    }
     try {
       await doLaunch(cwd, sshId, effectiveStandalone);
       launchCwd = '';
@@ -625,7 +647,7 @@
               onResume={resumeRecent}
               onRemove={deleteRecent}
               onKill={requestKill}
-              standaloneEnabled={false}
+              standaloneEnabled={settings.opencodeVersion === 'v2'}
             />
           {/each}
         </div>

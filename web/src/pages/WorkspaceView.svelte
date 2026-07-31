@@ -5,7 +5,7 @@
   import { observeMobileTouchViewport } from '../lib/device';
   import { getCurrentPushSubscription, subscribeToPushNotifications } from '../lib/notifications';
   import { getSettings, setSettings } from '../lib/settings';
-  import { refreshAllManagersVisual } from '../lib/zoomStore.svelte';
+  import { refreshAllManagersVisual, fitAllManagersVisual } from '../lib/zoomStore.svelte';
   import { get } from 'svelte/store';
   
   let { headerHeight = 40 } = $props<{ headerHeight?: number }>();
@@ -66,14 +66,37 @@
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible') {
+        fitAllManagersVisual();
         refreshAllManagersVisual();
       }
     };
 
+    // Handle browser back/forward cache (bfcache) — when the user navigates
+    // back to this page, the page may be loaded from bfcache without firing
+    // visibilitychange. The pageshow event fires in all cases.
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        // Page was restored from bfcache — force fit + visual refresh
+        fitAllManagersVisual();
+        refreshAllManagersVisual();
+      }
+    };
+
+    // Handle device wake/sleep cycle — when the device wakes from sleep,
+    // the 'resume' event fires on some platforms (iOS Safari).
+    const handleResume = () => {
+      fitAllManagersVisual();
+      refreshAllManagersVisual();
+    };
+
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('pageshow', handlePageShow);
+    window.addEventListener('resume', handleResume);
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pageshow', handlePageShow);
+      window.removeEventListener('resume', handleResume);
     };
   });
 </script>

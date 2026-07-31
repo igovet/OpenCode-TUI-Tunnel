@@ -25,6 +25,7 @@ export interface SessionRecord {
   reconnectable: number;
   interrupted_reason: string | null;
   ssh_connection_id: string | null;
+  standalone: number;
 }
 
 export interface ProjectHistoryRecord {
@@ -78,7 +79,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   exit_code INTEGER,
   last_seq INTEGER NOT NULL DEFAULT 0,
   reconnectable INTEGER NOT NULL DEFAULT 1,
-  interrupted_reason TEXT
+  interrupted_reason TEXT,
+  standalone INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS reconnect_tokens (
@@ -149,6 +151,9 @@ function migrateSchema(db: Database): void {
   if (!hasColumn(db, 'ssh_connections', 'opencode_command')) {
     db.exec(`ALTER TABLE ssh_connections ADD COLUMN opencode_command TEXT`);
   }
+  if (!hasColumn(db, 'sessions', 'standalone')) {
+    db.exec(`ALTER TABLE sessions ADD COLUMN standalone INTEGER NOT NULL DEFAULT 0`);
+  }
 }
 
 export function openDb(): Database {
@@ -181,7 +186,8 @@ export function insertSession(db: Database, session: SessionRecord): void {
         last_seq,
         reconnectable,
         interrupted_reason,
-        ssh_connection_id
+        ssh_connection_id,
+        standalone
       ) VALUES (
         @id,
         @backend,
@@ -198,7 +204,8 @@ export function insertSession(db: Database, session: SessionRecord): void {
         @last_seq,
         @reconnectable,
         @interrupted_reason,
-        @ssh_connection_id
+        @ssh_connection_id,
+        @standalone
       )
     `,
   ).run(session);
