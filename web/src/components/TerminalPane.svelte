@@ -35,7 +35,11 @@
   let showConnectionStatus = $derived(
     containerReady && !tabEnded && connectionStatus === 'disconnected',
   );
-  let connectionStatusText = $derived('Connection...');
+  let connectionStatusText = $derived(
+    manager?.getConnectionStatus() === 'disconnected' && manager?.hasEstablishedConnection()
+      ? 'Connection lost'
+      : 'Connection...',
+  );
 
   let isSshTab = $derived(tab?.backend === 'ssh');
   let paneTitle = $derived(
@@ -321,8 +325,11 @@
     ></div>
 
     {#if showConnectionStatus}
-      <div class="connection-status" aria-live="polite">
+      <div class="connection-status" class:connection-lost={connectionStatusText === 'Connection lost'} aria-live="polite">
         <span class="connection-status-text">{connectionStatusText}</span>
+        {#if connectionStatusText === 'Connection lost'}
+          <span class="connection-status-sub">The session is no longer available. Close this tab or try again later.</span>
+        {/if}
       </div>
     {/if}
   </div>
@@ -505,6 +512,20 @@
     opacity: 0.6;
     image-rendering: pixelated;
     animation: connection-pulse 1.5s ease-in-out infinite;
+  }
+
+  .connection-status.connection-lost {
+    background: var(--bg-overlay, #181c26);
+    border: 1px solid rgba(255, 80, 80, 0.3);
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+  }
+  .connection-status-sub {
+    display: block;
+    font-size: 0.85em;
+    opacity: 0.7;
+    margin-top: 4px;
   }
 
   @keyframes connection-pulse {

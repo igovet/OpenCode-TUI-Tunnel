@@ -4,7 +4,8 @@
   import { requestedWorkspacePage } from '../lib/workspacePage';
   import { workspacePage, workspaceTotalPages, workspaceMaxPanes } from '../lib/workspaceDisplay';
   import { getSettings } from '../lib/settings';
-  import { refreshAllManagers } from '../lib/zoomStore.svelte';
+  import { tick } from 'svelte';
+  import { refreshAllManagersVisual, fitAllManagersVisual } from '../lib/zoomStore.svelte';
 
   let containerWidth = $state(0);
   let containerHeight = $state(0);
@@ -44,11 +45,29 @@
 
   $effect(() => {
     const tabIdx = $requestedWorkspacePage;
+    console.log('[TerminalGrid] requestedWorkspacePage effect, tabIdx=', tabIdx, 'currentPage=', $workspacePage, 'totalPages=', totalPages);
     if (tabIdx !== null) {
       const targetPage = Math.floor(tabIdx / maxPanes);
+      console.log('[TerminalGrid] targetPage=', targetPage, 'currentPage=', $workspacePage);
       if (targetPage !== $workspacePage && targetPage < totalPages) {
         workspacePage.set(targetPage);
-        refreshAllManagers(); // Only refresh when page actually changes
+        console.log('[TerminalGrid] page set to', targetPage, 'calling tick()');
+        // Wait for Svelte to update the DOM, then fit and refresh.
+        // Without tick(), the DOM still has the OLD page's panes visible,
+        // so fit/refresh would target the wrong panes or skip the new ones.
+        tick().then(() => {
+          console.log('[TerminalGrid] tick() resolved, calling fit+refresh');
+          fitAllManagersVisual();
+          refreshAllManagersVisual();
+        });
+        // Also schedule a delayed fit+refresh after the pane has had time to wake
+        // up and reconnect. The sleep/wake effect in TerminalPane is async and may
+        // not have completed by the time fitAllManagersVisual() runs.
+        setTimeout(() => {
+          console.log('[TerminalGrid] 300ms timeout, calling fit+refresh');
+          fitAllManagersVisual();
+          refreshAllManagersVisual();
+        }, 300);
       }
       requestedWorkspacePage.set(null); // consume
     }
@@ -214,7 +233,14 @@
         const pageIdx = parseInt(e.key) - 1;
         if (pageIdx < totalPages) {
           workspacePage.set(pageIdx);
-          refreshAllManagers();
+          tick().then(() => {
+            fitAllManagersVisual();
+            refreshAllManagersVisual();
+          });
+          setTimeout(() => {
+            fitAllManagersVisual();
+            refreshAllManagersVisual();
+          }, 300);
           activateFirstTabOnPage(pageIdx);
           e.preventDefault();
         }
@@ -222,7 +248,14 @@
         if ($workspacePage > 0) {
           const newPage = $workspacePage - 1;
           workspacePage.set(newPage);
-          refreshAllManagers();
+          tick().then(() => {
+            fitAllManagersVisual();
+            refreshAllManagersVisual();
+          });
+          setTimeout(() => {
+            fitAllManagersVisual();
+            refreshAllManagersVisual();
+          }, 300);
           activateFirstTabOnPage(newPage);
           e.preventDefault();
         }
@@ -230,7 +263,14 @@
         if ($workspacePage < totalPages - 1) {
           const newPage = $workspacePage + 1;
           workspacePage.set(newPage);
-          refreshAllManagers();
+          tick().then(() => {
+            fitAllManagersVisual();
+            refreshAllManagersVisual();
+          });
+          setTimeout(() => {
+            fitAllManagersVisual();
+            refreshAllManagersVisual();
+          }, 300);
           activateFirstTabOnPage(newPage);
           e.preventDefault();
         }

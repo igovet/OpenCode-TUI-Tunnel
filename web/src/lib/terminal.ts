@@ -96,8 +96,10 @@ export class TerminalManager {
   private reconnectTimeout: number | null = null;
   private reconnectAttempts = 0;
   private finalReconnectScheduled = false;
+  private finalReconnectAttempts = 0;
   private static readonly MAX_RETRIES = 5;
   private static readonly BASE_BACKOFF_MS = 1000;
+  private static readonly MAX_FINAL_RETRIES = 3;
   private fitTimer: number | null = null;
   private fitVisibilityTimer: number | null = null;
   private touchElement: HTMLElement | null = null;
@@ -459,6 +461,29 @@ export class TerminalManager {
       const webglAddon = new WebglAddon();
       this.terminal.loadAddon(webglAddon);
       this._webglAddon = webglAddon;
+
+      // Handle WebGL context loss — re-create the addon when context is restored
+      const canvas = this.terminal.element?.querySelector('canvas');
+      if (canvas) {
+        canvas.addEventListener('webglcontextlost', (e: Event) => {
+          e.preventDefault();
+          console.warn('[TerminalManager] WebGL context lost — will recreate on restore');
+        });
+        canvas.addEventListener('webglcontextrestored', async () => {
+          console.log('[TerminalManager] WebGL context restored — re-creating WebGL addon');
+          if (this._disposed) return;
+          try {
+            const { WebglAddon: NewWebglAddon } = await import('@xterm/addon-webgl');
+            const newWebglAddon = new NewWebglAddon();
+            this.terminal.loadAddon(newWebglAddon);
+            this._webglAddon?.dispose();
+            this._webglAddon = newWebglAddon;
+            this.terminal.refresh(0, this.terminal.rows - 1);
+          } catch (e) {
+            console.warn('[TerminalManager] Failed to re-create WebGL addon after context restore:', e);
+          }
+        });
+      }
     } catch (e) {
       console.warn('WebGL addon unavailable, falling back to canvas renderer:', e);
       // Fallback to canvas renderer
@@ -703,16 +728,24 @@ export class TerminalManager {
   private scheduleReconnect(): void {
     this.reconnectAttempts++;
     if (this.reconnectAttempts > TerminalManager.MAX_RETRIES) {
-      this.markSessionEnded('Session died (connection lost)', 1);
-      this.reconnectAttempts = 0;
       if (!this.finalReconnectScheduled) {
         this.finalReconnectScheduled = true;
-        this.reconnectTimeout = window.setTimeout(() => {
-          if (this.sessionId) {
-            this.connect(this.sessionId, true);
-          }
-        }, 30000);
+        this.finalReconnectAttempts = 0;
       }
+      this.finalReconnectAttempts++;
+      if (this.finalReconnectAttempts > TerminalManager.MAX_FINAL_RETRIES) {
+        // Give up completely — mark session as ended with a clean message
+        this.markSessionEnded('Connection lost — session unavailable', 1);
+        this.finalReconnectScheduled = false;
+        this.finalReconnectAttempts = 0;
+        this.setConnectionStatus('disconnected');
+        return;
+      }
+      this.reconnectTimeout = window.setTimeout(() => {
+        if (this.sessionId) {
+          this.connect(this.sessionId, true);
+        }
+      }, 30000);
       return;
     }
     const delay =
@@ -735,10 +768,15 @@ export class TerminalManager {
     this.reconnectAttempts = 0;
     this.exited = false;
     this.finalReconnectScheduled = false;
+    this.finalReconnectAttempts = 0;
     this.streamReady = false;
     this.pinnedToBottom = false;
-    this.hasConnectedOnce = false;
+    // Clear the terminal buffer to remove stale messages from previous
+    // connections (e.g., "Session ended", "Connection lost").
+    // This ensures the user sees a fresh terminal on reconnect.
+    this.terminal.clear();
     if (!skipStatusReset) {
+      this.hasConnectedOnce = false;
       this.setConnectionStatus('disconnected');
     }
     if (this.reconnectTimeout) {
@@ -801,7 +839,6 @@ export class TerminalManager {
       this.reconnectTimeout = null;
     }
 
-    this.hasConnectedOnce = false;
     this.streamReady = false;
     this.setConnectionStatus('disconnected');
 
@@ -891,6 +928,7 @@ export class TerminalManager {
               typed.status === 'failed' ||
               typed.status === 'interrupted')
           ) {
+            this.exited = true;
             this.terminal.writeln(`\r\n\x1b[33mSession ended (${typed.status})\x1b[0m`);
             socket.close();
           }
@@ -898,6 +936,7 @@ export class TerminalManager {
         }
 
         if (typed.type === 'exit') {
+          this.exited = true;
           this.terminal.writeln(`\r\n\x1b[33mSession ended (code ${typed.exitCode})\x1b[0m`);
           if (this.reconnectTimeout) {
             clearTimeout(this.reconnectTimeout);
@@ -907,7 +946,10 @@ export class TerminalManager {
           socket.close();
         } else if (typed.type === 'error') {
           this.terminal.writeln(`\x1b[31mError: ${typed.message ?? 'unknown error'}\x1b[0m`);
+          // If the error occurs before the stream is ready (initial connection failure),
+          // the session is permanently unavailable — mark as exited to prevent reconnect.
           if (!this.streamReady) {
+            this.exited = true;
             socket.close();
           }
         }
@@ -916,7 +958,7 @@ export class TerminalManager {
       }
     };
 
-    socket.onclose = () => {
+    socket.onclose = (event: CloseEvent) => {
       if (this._ws !== socket) {
         return;
       }
@@ -926,6 +968,13 @@ export class TerminalManager {
       if (this.pingInterval) {
         window.clearInterval(this.pingInterval);
         this.pingInterval = null;
+      }
+
+      // Normal close codes (1000 = normal closure, 1001 = endpoint going away):
+      // do NOT attempt reconnect — the session ended cleanly.
+      if (event.code === 1000 || event.code === 1001) {
+        this.markSessionEnded('Session closed', 0);
+        return;
       }
 
       if (this.sessionId && !this.streamReady && !this.exited) {
@@ -948,7 +997,6 @@ export class TerminalManager {
   }
 
   disconnect(): void {
-    this.hasConnectedOnce = false;
     this.streamReady = false;
     this.setConnectionStatus('disconnected');
     if (this.reconnectTimeout) {

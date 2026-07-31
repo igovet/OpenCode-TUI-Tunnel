@@ -5,6 +5,31 @@ All notable changes to this project are documented here.
 ---
 
 <details open>
+<summary><strong>v0.3.5</strong> — 2026-07-31</summary>
+
+### 🎯 Features
+
+- Standalone badge now visible in dashboard's Open Sessions section for v2 sessions
+- Standalone mode flag persisted in database (survives server restart)
+
+### 🔧 Bug Fixes
+
+- Fixed standaloneByDefault setting not saving in SettingsModal — Toggle component now properly dispatches change events
+- Fixed LaunchBar standalone toggle being overwritten by settings sync effect
+- Fixed per-project standalone overrides not persisting across page reloads (now saved to localStorage)
+- Fixed dead sessions causing browser hangs from infinite WebSocket reconnect loop (added max retry limit, close code 1000/1001 handling, proper `exited` flag in error/status handlers)
+- Fixed WebGL terminals not re-rendering after tab drag, page switch, and sleep/wake cycles (added `fitAllManagersVisual()`, `tick()`-based DOM update waits, terminal.clear() on reconnect)
+- Fixed terminals not reconnecting after page switch — `disconnect()` and `reconnectIfDisconnected()` no longer reset `hasConnectedOnce`
+- Fixed native module build failure on Linux — `node-pty` and `better-sqlite3` now rebuild correctly
+
+### 🎨 UI/UX
+
+- "Connection lost" overlay now shows after max reconnect attempts (distinct from initial "Connection...")
+- Terminal buffer clears on reconnect to remove stale "Session ended" messages
+
+</details>
+
+<details>
 <summary><strong>v0.3.4</strong> — 2026-07-18</summary>
 
 ### 🔧 Bug Fixes

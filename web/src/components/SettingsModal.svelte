@@ -529,7 +529,7 @@
                 <span class="setting-label">Standalone by default</span>
                 <Toggle
                   checked={settings.standaloneByDefault}
-                  onchange={(e) => { settings.standaloneByDefault = e.currentTarget.checked; save(); }}
+                  onchange={(v) => { settings.standaloneByDefault = v; save(); }}
                 />
               </div>
             {/if}
